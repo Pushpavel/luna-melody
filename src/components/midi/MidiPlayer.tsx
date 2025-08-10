@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Upload, Play, Pause, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import PianoRoll, { PianoNote } from "./PianoRoll";
+import FallingPiano from "./FallingPiano";
+import { PianoNote } from "./PianoRoll";
 import { toast } from "sonner";
 
 // Tone.js and @tonejs/midi imports
@@ -190,7 +191,7 @@ const MidiPlayer: React.FC = () => {
             <span>Time: {formatTime(currentTime)}</span>
             <span>Length: {formatTime(duration)}</span>
           </div>
-          <PianoRoll notes={notes} currentTime={currentTime} totalDuration={duration} height={440} />
+          <FallingPiano notes={notes} currentTime={currentTime} totalDuration={duration} height={520} />
         </div>
       </div>
     </section>

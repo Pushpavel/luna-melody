@@ -12,15 +12,23 @@ type PianoRollProps = {
   currentTime: number; // seconds
   totalDuration: number; // seconds
   height?: number;
+  // Optional: overlay a subtle hatch on black-key notes to make the two-color scheme more obvious
+  showBlackHatch?: boolean;
 };
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+// Map MIDI pitch class to black/white key for two-color scheme
+const BLACK_KEY_PC = new Set([1, 3, 6, 8, 10]);
+const isBlackKey = (midi: number) => BLACK_KEY_PC.has(midi % 12);
+const colorForKeyType = (midi: number) => (isBlackKey(midi) ? `hsl(var(--brand))` : `hsl(var(--brand-2))`);
 
 export const PianoRoll: React.FC<PianoRollProps> = ({
   notes,
   currentTime,
   totalDuration,
   height = 420,
+  showBlackHatch = true,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(800);
@@ -89,7 +97,42 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
             <stop offset="0%" stopColor={`hsl(var(--brand))`} />
             <stop offset="100%" stopColor={`hsl(var(--brand-2))`} />
           </linearGradient>
+          {/* soft shadow for notes to lift them from grid */}
+          <filter id="noteShadow" x="-20%" y="-50%" width="140%" height="200%">
+            <feDropShadow dx="0" dy="0.4" stdDeviation="0.8" floodColor="#000" floodOpacity="0.35" />
+          </filter>
+          {/* subtle glow for playhead */}
+          <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="2.2" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          {/* sheen on top of notes */}
+          <linearGradient id="noteSheen" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#fff" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="#fff" stopOpacity="0" />
+          </linearGradient>
+          {/* Optional hatch pattern for black-key notes */}
+          <pattern id="blackNoteHatchPR" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <rect width="4" height="4" fill="transparent" />
+            <line x1="0" y1="0" x2="0" y2="4" stroke="#fff" strokeOpacity="0.22" strokeWidth="0.7" />
+          </pattern>
         </defs>
+
+        {/* Inline SVG CSS for micro animations and reduced motion */}
+        <style>
+          {`
+          .active-note-outline { animation: pulse 1.05s ease-in-out infinite; }
+          .playhead-pulse { transform-box: fill-box; transform-origin: center; animation: breathe 1.6s ease-in-out infinite; }
+          @keyframes pulse { 0%,100% { opacity: .7 } 50% { opacity: 1 } }
+          @keyframes breathe { 0%,100% { transform: scale(1); opacity: .65 } 50% { transform: scale(1.22); opacity: .35 } }
+          @media (prefers-reduced-motion: reduce) {
+            .active-note-outline, .playhead-pulse { animation: none !important; }
+          }
+        `}
+        </style>
 
         {/* Horizontal key lanes every octave */}
         {Array.from({ length: Math.floor((maxMidi - minMidi) / 12) + 2 }).map((_, idx) => {
@@ -121,6 +164,18 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
           />
         ))}
 
+        {/* Progress shading behind playhead for readability */}
+        <rect
+          x={0}
+          y={0}
+          width={playheadX}
+          height={height}
+          fill="currentColor"
+          opacity={0.035}
+          style={{ mixBlendMode: "soft-light" }}
+          pointerEvents="none"
+        />
+
         {/* Notes */}
         {notes.map((n, i) => {
           const x = n.time * pps;
@@ -128,6 +183,12 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
           const y = midiToY(n.midi);
           const h = 6;
           const isActive = playingSet.has(i);
+          const vel = clamp(n.velocity, 0, 1);
+          const baseOpacity = 0.6 + 0.35 * vel;
+          const isBlack = isBlackKey(n.midi);
+          const noteColor = colorForKeyType(n.midi);
+          const edgeColor = isBlack ? "#fff" : "#000";
+          const edgeOpacity = isBlack ? 0.18 : 0.22;
           return (
             <g key={i} className="animate-fade-in">
               <rect
@@ -136,8 +197,54 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                 width={w}
                 height={h}
                 rx={3}
-                fill="url(#noteFill)"
-                opacity={0.65 + 0.35 * clamp(n.velocity, 0, 1)}
+                fill={noteColor}
+                opacity={baseOpacity}
+                filter="url(#noteShadow)"
+                pointerEvents="none"
+              />
+              {/* subtle contrasting left edge for clearer boundaries */}
+              <rect
+                x={x}
+                y={y - h / 2}
+                width={Math.min(1, w)}
+                height={h}
+                fill={edgeColor}
+                opacity={edgeOpacity}
+                pointerEvents="none"
+              />
+              {/* optional hatch to make black-key notes unmistakable */}
+              {showBlackHatch && isBlack && (
+                <rect
+                  x={x}
+                  y={y - h / 2}
+                  width={w}
+                  height={h}
+                  rx={3}
+                  fill="url(#blackNoteHatchPR)"
+                  pointerEvents="none"
+                />
+              )}
+              {/* subtle stroke to separate from grid */}
+              <rect
+                x={x + 0.25}
+                y={y - h / 2 + 0.25}
+                width={Math.max(0, w - 0.5)}
+                height={Math.max(0, h - 0.5)}
+                rx={2.5}
+                fill="none"
+                stroke="hsl(var(--foreground))"
+                opacity={0.12}
+                pointerEvents="none"
+              />
+              {/* top sheen */}
+              <rect
+                x={x + 0.5}
+                y={y - h / 2 + 0.5}
+                width={Math.max(0, w - 1)}
+                height={h * 0.45}
+                rx={2}
+                fill="url(#noteSheen)"
+                pointerEvents="none"
               />
               {isActive && (
                 <rect
@@ -147,15 +254,16 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                   height={h + 2}
                   rx={3}
                   fill="none"
-                  stroke={`hsl(var(--brand-2))`}
+                  stroke={noteColor}
                   strokeWidth={1.5}
+                  className="active-note-outline"
                 />
               )}
             </g>
           );
         })}
 
-        {/* Playhead */}
+        {/* Playhead with glow and breathing dot */}
         <line
           x1={playheadX}
           x2={playheadX}
@@ -163,9 +271,11 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
           y2={height}
           stroke={`hsl(var(--brand))`}
           strokeWidth={2}
-          opacity={0.9}
+          opacity={0.95}
+          filter="url(#softGlow)"
         />
         <circle cx={playheadX} cy={12} r={3} fill={`hsl(var(--brand))`} />
+        <circle cx={playheadX} cy={12} r={6} fill={`hsl(var(--brand))`} className="playhead-pulse" opacity={0.4} />
       </svg>
     </div>
   );

@@ -26,6 +26,11 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(800);
 
+  // Simplified color mapping: 2 colors from theme
+  // - Black-key notes: brand color
+  // - White-key notes: brand-2 color
+  const colorForKeyType = (m: number) => (isBlack(m) ? `hsl(var(--brand))` : `hsl(var(--brand-2))`);
+
   useEffect(() => {
     if (!containerRef.current) return;
     const el = containerRef.current;
@@ -125,6 +130,17 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
     return list;
   }, [notes, keyMap, currentTime, laneHeight, pps]);
 
+  // Partition notes so white-key notes render first, black-key notes render on top
+  const partitioned = useMemo(() => {
+    const whites: Array<{ n: PianoNote; x: number; w: number; y: number; h: number }> = [];
+    const blacks: Array<{ n: PianoNote; x: number; w: number; y: number; h: number }> = [];
+    for (const it of visibleNotes) {
+      if (isBlack(it.n.midi)) blacks.push(it);
+      else whites.push(it);
+    }
+    return { whites, blacks };
+  }, [visibleNotes]);
+
   return (
     <div ref={containerRef} className="surface-card w-full overflow-hidden" style={{ height }}>
       <svg width={width} height={height} className="block w-full h-full">
@@ -155,7 +171,46 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
           <filter id="keyShadow" x="-10%" y="-10%" width="120%" height="120%">
             <feDropShadow dx="0" dy="2" stdDeviation="1.6" floodColor="#000" floodOpacity="0.22" />
           </filter>
+          {/* soft shadow for falling notes */}
+          <filter id="fallShadow" x="-20%" y="-20%" width="140%" height="160%">
+            <feDropShadow dx="0" dy="0.9" stdDeviation="1.1" floodColor="#000" floodOpacity="0.35" />
+          </filter>
+          {/* additive glow so overlapping notes become brighter */}
+          <filter id="noteGlow" x="-40%" y="-40%" width="180%" height="220%">
+            <feGaussianBlur stdDeviation="2.6" />
+          </filter>
+          {/* soft glow for the playhead line */}
+          <filter id="playheadGlow" x="-40%" y="-40%" width="180%" height="180%">
+            <feGaussianBlur stdDeviation="2" result="pb" />
+            <feMerge>
+              <feMergeNode in="pb" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          {/* sheen for note bodies */}
+          <linearGradient id="noteSheen" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+          </linearGradient>
+          {/* subtle hatch pattern for black-key notes */}
+          <pattern id="blackNoteHatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <rect width="6" height="6" fill="none" />
+            <line x1="0" y1="0" x2="0" y2="6" stroke="#fff" strokeOpacity="0.08" strokeWidth="1" />
+          </pattern>
         </defs>
+
+        {/* Inline CSS for subtle animations and reduced motion */}
+        <style>
+          {`
+            .note-enter { animation: fadeIn .3s ease-out both; }
+            @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px) } to { opacity: 1; transform: translateY(0) } }
+            @media (prefers-reduced-motion: reduce) { .note-enter { animation: none !important; } }
+            .lane-stripe { mix-blend-mode: soft-light; }
+            .edge-highlight { mix-blend-mode: screen; }
+            .edge-dark { mix-blend-mode: multiply; }
+            .blend-screen { mix-blend-mode: screen; }
+          `}
+        </style>
 
         {/* Lane background grid */}
         {[...Array(8)].map((_, i) => (
@@ -170,20 +225,199 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
           />
         ))}
 
-        {/* Falling notes */}
-        {visibleNotes.map((it, idx) => (
-          <g key={idx} className="animate-fade-in">
+        {/* Vertical key column tints to improve note separation */}
+        {Array.from({ length: maxMidi - minMidi + 1 }, (_, i) => minMidi + i).map((m) => {
+          const k = keyMap[m];
+          const blk = isBlack(m);
+          return (
             <rect
-              x={it.x + 1}
-              y={it.y}
-              width={Math.max(2, it.w - 2)}
-              height={it.h}
-              rx={3}
-              fill="url(#noteFillVertical)"
-              opacity={0.6 + 0.35 * clamp(it.n.velocity, 0, 1)}
+              key={`col-${m}`}
+              x={k.x}
+              y={0}
+              width={k.w}
+              height={laneHeight}
+              className="lane-stripe"
+              fill={blk ? "#0b1220" : "#ffffff"}
+              opacity={blk ? 0.05 : 0.03}
+              pointerEvents="none"
             />
-          </g>
-        ))}
+          );
+        })}
+
+        {/* Falling notes: render white-key notes first */}
+        {partitioned.whites.map((it, idx) => {
+          const vel = clamp(it.n.velocity, 0, 1);
+          const fillCol = colorForKeyType(it.n.midi);
+          const baseOpacity = 0.62 + 0.28 * vel; // was 0.5 + 0.3*vel
+          const capH = Math.min(3, Math.max(2, it.h * 0.08));
+          const strokeColor = fillCol; // color-coded outline
+          const strokeOpacity = 0.22; // was black 0.22
+          return (
+            <g key={`w-${idx}`} className="note-enter">
+              {/* glow layer (additive) - reduced to preserve hue */}
+              <rect
+                x={it.x + 1}
+                y={it.y}
+                width={Math.max(2, it.w - 2)}
+                height={it.h}
+                rx={4}
+                fill={fillCol}
+                opacity={0.18 + 0.22 * vel} // was 0.32 + 0.38*vel
+                filter="url(#noteGlow)"
+                className="blend-screen"
+              />
+              {/* main body */}
+              <rect
+                x={it.x + 1}
+                y={it.y}
+                width={Math.max(2, it.w - 2)}
+                height={it.h}
+                rx={3}
+                fill={fillCol}
+                opacity={baseOpacity}
+                filter="url(#fallShadow)"
+              />
+              {/* left dark edge for separation */}
+              <rect
+                x={it.x + 1}
+                y={it.y}
+                width={1.25}
+                height={it.h}
+                rx={1}
+                fill="#000000"
+                opacity={0.18}
+                className="edge-dark"
+                pointerEvents="none"
+              />
+              {/* top sheen */}
+              <rect
+                x={it.x + 1.25}
+                y={it.y + 0.25}
+                width={Math.max(0, it.w - 2.5)}
+                height={Math.min(it.h * 0.38, 12)}
+                rx={2.5}
+                fill="url(#noteSheen)"
+                pointerEvents="none"
+              />
+              {/* thin outline */}
+              <rect
+                x={it.x + 1.25}
+                y={it.y + 0.25}
+                width={Math.max(0, it.w - 2.5)}
+                height={Math.max(0, it.h - 0.5)}
+                rx={2.5}
+                fill="none"
+                stroke={strokeColor}
+                opacity={strokeOpacity}
+                pointerEvents="none"
+              />
+              {/* bottom cap */}
+              <rect
+                x={it.x + 1}
+                y={it.y + it.h - capH}
+                width={Math.max(2, it.w - 2)}
+                height={capH}
+                rx={2}
+                fill={fillCol}
+                opacity={0.65}
+                className="blend-screen"
+              />
+            </g>
+          );
+        })}
+
+        {/* Falling notes: render black-key notes on top */}
+        {partitioned.blacks.map((it, idx) => {
+          const vel = clamp(it.n.velocity, 0, 1);
+          const fillCol = colorForKeyType(it.n.midi);
+          const baseOpacity = 0.66 + 0.26 * vel; // was 0.52 + 0.32*vel
+          const capH = Math.min(3, Math.max(2, it.h * 0.08));
+          const strokeColor = fillCol; // color-coded outline
+          const strokeOpacity = 0.24; // was white 0.18
+          return (
+            <g key={`b-${idx}`} className="note-enter">
+              {/* glow layer (additive) - reduced to preserve hue */}
+              <rect
+                x={it.x + 1}
+                y={it.y}
+                width={Math.max(2, it.w - 2)}
+                height={it.h}
+                rx={4}
+                fill={fillCol}
+                opacity={0.2 + 0.24 * vel} // was 0.35 + 0.4*vel
+                filter="url(#noteGlow)"
+                className="blend-screen"
+              />
+              {/* main body */}
+              <rect
+                x={it.x + 1}
+                y={it.y}
+                width={Math.max(2, it.w - 2)}
+                height={it.h}
+                rx={3}
+                fill={fillCol}
+                opacity={baseOpacity}
+                filter="url(#fallShadow)"
+              />
+              {/* subtle hatch to mark black-key notes - slightly stronger */}
+              <rect
+                x={it.x + 1}
+                y={it.y}
+                width={Math.max(2, it.w - 2)}
+                height={it.h}
+                rx={3}
+                fill="url(#blackNoteHatch)"
+                opacity={0.4} // was 0.3
+                pointerEvents="none"
+              />
+              {/* left light edge for separation */}
+              <rect
+                x={it.x + 1}
+                y={it.y}
+                width={1.25}
+                height={it.h}
+                rx={1}
+                fill="#ffffff"
+                opacity={0.25}
+                className="edge-highlight"
+                pointerEvents="none"
+              />
+              {/* top sheen */}
+              <rect
+                x={it.x + 1.25}
+                y={it.y + 0.25}
+                width={Math.max(0, it.w - 2.5)}
+                height={Math.min(it.h * 0.38, 12)}
+                rx={2.5}
+                fill="url(#noteSheen)"
+                pointerEvents="none"
+              />
+              {/* thin outline */}
+              <rect
+                x={it.x + 1.25}
+                y={it.y + 0.25}
+                width={Math.max(0, it.w - 2.5)}
+                height={Math.max(0, it.h - 0.5)}
+                rx={2.5}
+                fill="none"
+                stroke={strokeColor}
+                opacity={strokeOpacity}
+                pointerEvents="none"
+              />
+              {/* bottom cap */}
+              <rect
+                x={it.x + 1}
+                y={it.y + it.h - capH}
+                width={Math.max(2, it.w - 2)}
+                height={capH}
+                rx={2}
+                fill={fillCol}
+                opacity={0.7}
+                className="blend-screen"
+              />
+            </g>
+          );
+        })}
 
         {/* Playhead where notes hit the keyboard */}
         <line
@@ -194,6 +428,7 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
           stroke={`hsl(var(--brand))`}
           strokeWidth={2}
           opacity={0.9}
+          filter="url(#playheadGlow)"
         />
 
         {/* Keyboard background */}
@@ -256,17 +491,32 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
                   fill="url(#keyHighlightDark)"
                   pointerEvents="none"
                 />
-                {/* Active highlight (amber-200 tone) */}
+                {/* Active highlight - white keys use brand-2 */}
                 {active && (
-                  <rect
-                    x={k.x + 1}
-                    y={laneHeight + 1}
-                    width={k.w - 2}
-                    height={keyboardHeight - 2}
-                    rx={4}
-                    fill="hsl(var(--brand))"
-                    opacity={0.24}
-                  />
+                  <>
+                    <rect
+                      x={k.x + 1}
+                      y={laneHeight + 1}
+                      width={k.w - 2}
+                      height={keyboardHeight - 2}
+                      rx={4}
+                      fill="hsl(var(--brand-2))"
+                      opacity={0.24}
+                      style={{ mixBlendMode: "soft-light" }}
+                    />
+                    <rect
+                      x={k.x + 1}
+                      y={laneHeight + 1}
+                      width={k.w - 2}
+                      height={keyboardHeight - 2}
+                      rx={4}
+                      fill="none"
+                      stroke={`hsl(var(--brand-2))`}
+                      opacity={0.45}
+                      filter="url(#playheadGlow)"
+                      pointerEvents="none"
+                    />
+                  </>
                 )}
               </g>
             );
@@ -311,17 +561,32 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
                   fill="url(#keyHighlightDark)"
                   pointerEvents="none"
                 />
-                {/* Active highlight (amber-400 tone) */}
+                {/* Active highlight - black keys use brand */}
                 {active && (
-                  <rect
-                    x={k.x + 1}
-                    y={laneHeight + 1}
-                    width={k.w - 2}
-                    height={h - 2}
-                    rx={3}
-                    fill="hsl(var(--brand))"
-                    opacity={0.28}
-                  />
+                  <>
+                    <rect
+                      x={k.x + 1}
+                      y={laneHeight + 1}
+                      width={k.w - 2}
+                      height={h - 2}
+                      rx={3}
+                      fill="hsl(var(--brand))"
+                      opacity={0.28}
+                      style={{ mixBlendMode: "screen" }}
+                    />
+                    <rect
+                      x={k.x + 1}
+                      y={laneHeight + 1}
+                      width={k.w - 2}
+                      height={h - 2}
+                      rx={3}
+                      fill="none"
+                      stroke={`hsl(var(--brand))`}
+                      opacity={0.5}
+                      filter="url(#playheadGlow)"
+                      pointerEvents="none"
+                    />
+                  </>
                 )}
               </g>
             );

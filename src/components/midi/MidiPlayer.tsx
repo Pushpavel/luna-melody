@@ -18,7 +18,8 @@ const formatTime = (seconds: number) => {
 
 const MidiPlayer: React.FC = () => {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const synthRef = useRef<Tone.PolySynth<Tone.Synth> | null>(null);
+  const synthRef = useRef<Tone.Sampler | null>(null);
+  const reverbRef = useRef<Tone.Reverb | null>(null);
   const scheduledRef = useRef<number[]>([]);
 
   const [fileName, setFileName] = useState<string | null>(null);
@@ -26,21 +27,64 @@ const MidiPlayer: React.FC = () => {
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
+  const [samplesLoaded, setSamplesLoaded] = useState(false);
 
   // Initialize synth
   useEffect(() => {
-    const poly = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: "sine" },
-      envelope: { attack: 0.005, decay: 0.2, sustain: 0.2, release: 0.8 },
-    }).toDestination();
-    poly.set({ volume: -6 });
-    synthRef.current = poly;
+    const reverb = new Tone.Reverb({ decay: 2.5, preDelay: 0.01, wet: 0.15 }).toDestination();
+    reverbRef.current = reverb;
+
+    const sampler = new Tone.Sampler(
+      {
+        A0: "A0.mp3",
+        C1: "C1.mp3",
+        "D#1": "Ds1.mp3",
+        "F#1": "Fs1.mp3",
+        A1: "A1.mp3",
+        C2: "C2.mp3",
+        "D#2": "Ds2.mp3",
+        "F#2": "Fs2.mp3",
+        A2: "A2.mp3",
+        C3: "C3.mp3",
+        "D#3": "Ds3.mp3",
+        "F#3": "Fs3.mp3",
+        A3: "A3.mp3",
+        C4: "C4.mp3",
+        "D#4": "Ds4.mp3",
+        "F#4": "Fs4.mp3",
+        A4: "A4.mp3",
+        C5: "C5.mp3",
+        "D#5": "Ds5.mp3",
+        "F#5": "Fs5.mp3",
+        A5: "A5.mp3",
+        C6: "C6.mp3",
+        "D#6": "Ds6.mp3",
+        "F#6": "Fs6.mp3",
+        A6: "A6.mp3",
+        C7: "C7.mp3",
+        "D#7": "Ds7.mp3",
+        "F#7": "Fs7.mp3",
+        A7: "A7.mp3",
+        C8: "C8.mp3",
+      },
+      () => {
+        setSamplesLoaded(true);
+      },
+      "https://tonejs.github.io/audio/salamander/"
+    ).connect(reverb);
+
+    sampler.release = 1;
+    sampler.volume.value = -8;
+    synthRef.current = sampler;
+    setSamplesLoaded(false);
 
     return () => {
       Tone.Transport.stop();
       Tone.Transport.cancel(0);
-      poly.dispose();
+      sampler.dispose();
+      reverb.dispose();
       synthRef.current = null;
+      reverbRef.current = null;
     };
   }, []);
 
@@ -118,6 +162,11 @@ const MidiPlayer: React.FC = () => {
     }
     await Tone.start();
 
+    if (!samplesLoaded) {
+      toast("Loading piano samples…");
+      return;
+    }
+
     // If transport is at 0 or stopped, (re)schedule
     if (Tone.Transport.state === "stopped" || Math.abs(Tone.Transport.seconds) < 0.001) {
       Tone.Transport.position = 0;
@@ -126,7 +175,7 @@ const MidiPlayer: React.FC = () => {
 
     Tone.Transport.start();
     setIsPlaying(true);
-  }, [notes.length, scheduleNotes]);
+  }, [notes.length, scheduleNotes, samplesLoaded]);
 
   const onPause = useCallback(() => {
     Tone.Transport.pause();

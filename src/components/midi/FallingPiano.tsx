@@ -65,6 +65,9 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
   const visibleSeconds = 8;
   const pps = laneHeight / visibleSeconds; // pixels per second
 
+  // Small time tolerance to prevent flicker at boundaries due to float jitter
+  const EPS = 0.01; // 10ms
+
   // Build key map for positions and sizes
   type KeyInfo = { x: number; w: number; black: boolean };
   const keyMap: Record<number, KeyInfo> = useMemo(() => {
@@ -96,7 +99,7 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
   const activeSet = useMemo(() => {
     const s = new Set<number>();
     for (const n of notes) {
-      if (currentTime >= n.time && currentTime <= n.time + n.duration) s.add(n.midi);
+      if (currentTime >= n.time - EPS && currentTime <= n.time + n.duration + EPS) s.add(n.midi);
     }
     return s;
   }, [notes, currentTime]);
@@ -125,8 +128,8 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
 
       list.push({ n, x: km.x, w: km.w, y, h: clippedH });
     }
-    // sort by y to ensure nicer layering
-    list.sort((a, b) => a.y - b.y);
+    // sort deterministically to avoid frame-to-frame reordering flicker
+    list.sort((a, b) => (a.n.time - b.n.time) || (a.n.midi - b.n.midi));
     return list;
   }, [notes, keyMap, currentTime, laneHeight, pps]);
 
@@ -245,15 +248,16 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
         })}
 
         {/* Falling notes: render white-key notes first */}
-        {partitioned.whites.map((it, idx) => {
+        {partitioned.whites.map((it) => {
           const vel = clamp(it.n.velocity, 0, 1);
           const fillCol = colorForKeyType(it.n.midi);
           const baseOpacity = 0.62 + 0.28 * vel; // was 0.5 + 0.3*vel
           const capH = Math.min(3, Math.max(2, it.h * 0.08));
           const strokeColor = fillCol; // color-coded outline
           const strokeOpacity = 0.22; // was black 0.22
+          const stableKey = `wn-${it.n.midi}-${it.n.time}-${it.n.duration}`;
           return (
-            <g key={`w-${idx}`} className="note-enter">
+            <g key={stableKey} className="note-enter">
               {/* glow layer (additive) - reduced to preserve hue */}
               <rect
                 x={it.x + 1}
@@ -327,15 +331,16 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
         })}
 
         {/* Falling notes: render black-key notes on top */}
-        {partitioned.blacks.map((it, idx) => {
+        {partitioned.blacks.map((it) => {
           const vel = clamp(it.n.velocity, 0, 1);
           const fillCol = colorForKeyType(it.n.midi);
           const baseOpacity = 0.66 + 0.26 * vel; // was 0.52 + 0.32*vel
           const capH = Math.min(3, Math.max(2, it.h * 0.08));
           const strokeColor = fillCol; // color-coded outline
           const strokeOpacity = 0.24; // was white 0.18
+          const stableKey = `bn-${it.n.midi}-${it.n.time}-${it.n.duration}`;
           return (
-            <g key={`b-${idx}`} className="note-enter">
+            <g key={stableKey} className="note-enter">
               {/* glow layer (additive) - reduced to preserve hue */}
               <rect
                 x={it.x + 1}

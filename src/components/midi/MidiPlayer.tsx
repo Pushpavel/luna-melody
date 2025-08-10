@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import FallingPiano from "./FallingPiano";
 import { PianoNote } from "./PianoRoll";
 import { toast } from "sonner";
+import SeekBar from "./SeekBar";
 
 // Tone.js and @tonejs/midi imports
 import * as Tone from "tone";
@@ -21,6 +22,8 @@ const MidiPlayer: React.FC = () => {
   const synthRef = useRef<Tone.Sampler | null>(null);
   const reverbRef = useRef<Tone.Reverb | null>(null);
   const scheduledRef = useRef<number[]>([]);
+  const scrubbingRef = useRef(false);
+  const wasPlayingRef = useRef(false);
 
   const [fileName, setFileName] = useState<string | null>(null);
   const [notes, setNotes] = useState<PianoNote[]>([]);
@@ -92,12 +95,24 @@ const MidiPlayer: React.FC = () => {
   useEffect(() => {
     let raf = 0;
     const loop = () => {
-      setCurrentTime(Tone.Transport.seconds);
+      if (!scrubbingRef.current) {
+        const t = Tone.Transport.seconds;
+        if (duration > 0 && t >= duration - 0.001) {
+          // Clamp to end and stop advancing when we reach the end
+          setCurrentTime(duration);
+          if (Tone.Transport.state === "started") {
+            Tone.Transport.pause();
+            setIsPlaying(false);
+          }
+        } else {
+          setCurrentTime(Math.max(0, t));
+        }
+      }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [duration]);
 
   const onChooseFile = () => inputRef.current?.click();
 
@@ -167,9 +182,8 @@ const MidiPlayer: React.FC = () => {
       return;
     }
 
-    // If transport is at 0 or stopped, (re)schedule
-    if (Tone.Transport.state === "stopped" || Math.abs(Tone.Transport.seconds) < 0.001) {
-      Tone.Transport.position = 0;
+    // If transport is stopped, (re)schedule but keep current position (may have been set by seek)
+    if (Tone.Transport.state === "stopped") {
       scheduleNotes();
     }
 
@@ -190,6 +204,49 @@ const MidiPlayer: React.FC = () => {
   }, []);
 
   const headerTitle = useMemo(() => fileName ?? "Upload a .mid file to begin", [fileName]);
+
+  // Handlers for seek bar
+  const handleScrub = useCallback((val: number) => {
+    if (!scrubbingRef.current) {
+      scrubbingRef.current = true;
+      wasPlayingRef.current = isPlaying;
+      if (isPlaying) {
+        Tone.Transport.pause();
+        setIsPlaying(false);
+      }
+    }
+    setCurrentTime(val);
+  }, [isPlaying]);
+
+  const handleScrubEnd = useCallback((val: number) => {
+    // Clamp to valid range
+    const target = Math.min(Math.max(0, val), duration || 0);
+
+    // Move transport to the new time
+    try {
+      // Prefer setting seconds to jump without starting
+      // @ts-ignore Tone.Transport.seconds is a setter at runtime
+      Tone.Transport.seconds = target;
+    } catch {
+      // Fallback
+      // @ts-ignore position also accepts seconds
+      Tone.Transport.position = target as any;
+    }
+
+    // If starting from stopped, ensure notes are scheduled
+    if (Tone.Transport.state === "stopped") {
+      scheduleNotes();
+    }
+
+    // Resume if user was playing
+    if (wasPlayingRef.current) {
+      Tone.Transport.start();
+      setIsPlaying(true);
+    }
+
+    scrubbingRef.current = false;
+    setCurrentTime(target);
+  }, [scheduleNotes, duration]);
 
   return (
     <section className="container mx-auto max-w-6xl py-10">
@@ -235,11 +292,16 @@ const MidiPlayer: React.FC = () => {
           </div>
         </div>
 
-        <div className="surface-card p-2 md:p-4">
-          <div className="flex items-center justify-between px-2 py-1 text-xs text-muted-foreground">
-            <span>Time: {formatTime(currentTime)}</span>
-            <span>Length: {formatTime(duration)}</span>
-          </div>
+        <div className="surface-card p-3 md:p-5">
+          {/* Seekable progress bar */}
+          <SeekBar
+            current={currentTime}
+            duration={duration}
+            onScrub={handleScrub}
+            onScrubEnd={handleScrubEnd}
+            className="mb-3"
+          />
+
           <FallingPiano notes={notes} currentTime={currentTime} totalDuration={duration} height={520} />
         </div>
       </div>

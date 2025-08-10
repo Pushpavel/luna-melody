@@ -50,7 +50,7 @@ npm run dev
 - Click on "New codespace" to launch a new Codespace environment.
 - Edit files directly within the Codespace and commit and push your changes once you're done.
 
-## What technologies are used for this project?
+## UI & Technology
 
 This project is built with:
 
@@ -59,6 +59,13 @@ This project is built with:
 - React
 - shadcn-ui
 - Tailwind CSS
+
+### UI/UX Design
+
+- Modern dark theme with gradients and subtle shadows
+- Piano keys and controls styled for clarity and accessibility in low-light environments
+- Responsive layout for desktop and mobile
+- Inspired by professional music tools and MIDIano for visual clarity
 
 ## How can I deploy this project?
 

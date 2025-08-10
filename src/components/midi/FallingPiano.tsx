@@ -133,6 +133,28 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
             <stop offset="0%" stopColor={`hsl(var(--brand))`} />
             <stop offset="100%" stopColor={`hsl(var(--brand-2))`} />
           </linearGradient>
+          {/* Modern dark theme gradients for keys and background */}
+          <linearGradient id="whiteKeyDarkGradient" x1="0" y1="0" x2="0" y2="1">
+            {/* Subtle dark base for keys to match bg-slate tones */}
+            <stop offset="0%" stopColor="#0b1220" />
+            <stop offset="100%" stopColor="#111827" />
+          </linearGradient>
+          <linearGradient id="blackKeyDarkGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#0b1220" />
+            <stop offset="100%" stopColor="#020617" />
+          </linearGradient>
+          <linearGradient id="keyHighlightDark" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+          </linearGradient>
+          <linearGradient id="keyboardBgDark" x1="0" y1="0" x2="0" y2="1">
+            {/* from-slate-900 to-slate-800 */}
+            <stop offset="0%" stopColor="#0f172a" />
+            <stop offset="100%" stopColor="#1e293b" />
+          </linearGradient>
+          <filter id="keyShadow" x="-10%" y="-10%" width="120%" height="120%">
+            <feDropShadow dx="0" dy="2" stdDeviation="1.6" floodColor="#000" floodOpacity="0.22" />
+          </filter>
         </defs>
 
         {/* Lane background grid */}
@@ -180,7 +202,7 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
           y={laneHeight}
           width={width}
           height={keyboardHeight}
-          fill={`hsl(var(--card))`}
+          fill="url(#keyboardBgDark)"
         />
 
         {/* White keys */}
@@ -191,25 +213,59 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
             const active = activeSet.has(m);
             return (
               <g key={`w-${m}`}>
+                {/* Key shadow */}
+                <rect
+                  x={k.x}
+                  y={laneHeight + 2}
+                  width={k.w}
+                  height={keyboardHeight - 2}
+                  rx={6}
+                  fill="none"
+                  filter="url(#keyShadow)"
+                />
+                {/* Key body with dark gradient to blend with bg */}
                 <rect
                   x={k.x}
                   y={laneHeight}
                   width={k.w}
                   height={keyboardHeight}
-                  fill={`hsl(var(--background))`}
-                  stroke={`hsl(var(--border))`}
-                  strokeWidth={0.75}
-                  opacity={0.9}
+                  rx={6}
+                  fill="url(#whiteKeyDarkGradient)"
+                  stroke="hsl(var(--border))"
+                  strokeWidth={1}
+                  opacity={0.98}
                 />
+                {/* Subtle white veil like bg-white/3 */}
+                <rect
+                  x={k.x + 1}
+                  y={laneHeight + 1}
+                  width={k.w - 2}
+                  height={keyboardHeight - 2}
+                  rx={5}
+                  fill="hsl(var(--background))"
+                  opacity={0.05}
+                  pointerEvents="none"
+                />
+                {/* Glossy highlight */}
+                <rect
+                  x={k.x + 1}
+                  y={laneHeight + 1}
+                  width={k.w - 2}
+                  height={keyboardHeight * 0.22}
+                  rx={4}
+                  fill="url(#keyHighlightDark)"
+                  pointerEvents="none"
+                />
+                {/* Active highlight (amber-200 tone) */}
                 {active && (
                   <rect
                     x={k.x + 1}
                     y={laneHeight + 1}
                     width={k.w - 2}
                     height={keyboardHeight - 2}
-                    rx={3}
-                    fill={`hsl(var(--brand))`}
-                    opacity={0.25}
+                    rx={4}
+                    fill="hsl(var(--brand))"
+                    opacity={0.24}
                   />
                 )}
               </g>
@@ -225,23 +281,46 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
             const h = keyboardHeight * 0.62;
             return (
               <g key={`b-${m}`}>
+                {/* Key shadow */}
+                <rect
+                  x={k.x}
+                  y={laneHeight + 2}
+                  width={k.w}
+                  height={h - 2}
+                  rx={4}
+                  fill="none"
+                  filter="url(#keyShadow)"
+                />
+                {/* Key body with dark gradient */}
                 <rect
                   x={k.x}
                   y={laneHeight}
                   width={k.w}
                   height={h}
-                  fill={`hsl(var(--muted-foreground))`}
-                  opacity={0.9}
+                  rx={4}
+                  fill="url(#blackKeyDarkGradient)"
+                  opacity={0.98}
                 />
+                {/* Glossy highlight */}
+                <rect
+                  x={k.x + 0.5}
+                  y={laneHeight + 1}
+                  width={k.w - 1}
+                  height={h * 0.32}
+                  rx={3}
+                  fill="url(#keyHighlightDark)"
+                  pointerEvents="none"
+                />
+                {/* Active highlight (amber-400 tone) */}
                 {active && (
                   <rect
                     x={k.x + 1}
                     y={laneHeight + 1}
                     width={k.w - 2}
                     height={h - 2}
-                    rx={2}
-                    fill={`hsl(var(--brand-2))`}
-                    opacity={0.35}
+                    rx={3}
+                    fill="hsl(var(--brand))"
+                    opacity={0.28}
                   />
                 )}
               </g>

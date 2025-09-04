@@ -12,6 +12,13 @@ import SeekBar from "./SeekBar";
 import * as Tone from "tone";
 import { Midi } from "@tonejs/midi";
 
+// Note trigger callback type
+type NoteTriggerCallback = (midi: number, velocity: number) => void;
+
+interface MidiPlayerProps {
+  onNoteTrigger?: NoteTriggerCallback;
+}
+
 const formatTime = (seconds: number) => {
   const s = Math.max(0, Math.floor(seconds));
   const m = Math.floor(s / 60);
@@ -19,7 +26,7 @@ const formatTime = (seconds: number) => {
   return `${m}:${r.toString().padStart(2, "0")}`;
 };
 
-const MidiPlayer: React.FC = () => {
+const MidiPlayer: React.FC<MidiPlayerProps> = ({ onNoteTrigger }) => {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const synthRef = useRef<Tone.Sampler | null>(null);
   const reverbRef = useRef<Tone.Reverb | null>(null);
@@ -234,10 +241,13 @@ const MidiPlayer: React.FC = () => {
       const id = Tone.Transport.schedule((time) => {
         const note = Tone.Frequency(n.midi, "midi").toNote();
         synthRef.current?.triggerAttackRelease(note, n.duration, time, n.velocity);
+        if (onNoteTrigger) {
+          onNoteTrigger(n.midi, n.velocity);
+        }
       }, n.time);
       scheduledRef.current.push(id);
     });
-  }, [notes]);
+  }, [notes, onNoteTrigger]);
 
   const onPlay = useCallback(async () => {
     if (!notes.length) {

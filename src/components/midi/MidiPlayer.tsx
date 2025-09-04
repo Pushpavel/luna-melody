@@ -318,88 +318,81 @@ const MidiPlayer: React.FC = () => {
   }, [scheduleNotes, duration]);
 
   return (
-    <section className="container mx-auto max-w-6xl py-10">
+    <section className="container mx-auto max-w-6xl py-5">
       <header className="mb-6">
         <h1 className="text-3xl md:text-4xl font-semibold tracking-tight mb-2">Piano MIDI Player</h1>
         <p className="text-sm text-muted-foreground">{headerTitle}</p>
       </header>
 
-      <div className="grid gap-6">
-        <div className="surface-card p-4 md:p-6 animate-enter">
+      <div className="grid gap-4">
+        <div className="surface-card p-3 md:p-4 animate-enter">
           <div className="flex flex-col gap-4">
-            {/* File Upload Section */}
-            <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 justify-between">
-              <div className="flex items-center gap-3">
-                <Button variant="hero" onClick={onChooseFile} className="hover-scale" disabled={isProcessing}>
-                  <Upload />
-                  Choose MIDI
-                </Button>
-                <input
-                  ref={inputRef}
-                  type="file"
-                  accept=".mid,.midi"
-                  onChange={onFileSelected}
-                  className="hidden"
-                />
-                <div className="hidden md:block text-sm text-muted-foreground">
-                  {fileName ? fileName : ".mid or .midi file"}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                {!isPlaying ? (
-                  <Button onClick={onPlay} variant="secondary" className="hover-scale" aria-label="Play" disabled={isProcessing}>
-                    <Play /> Play
-                  </Button>
-                ) : (
-                  <Button onClick={onPause} variant="secondary" className="hover-scale" aria-label="Pause">
-                    <Pause /> Pause
-                  </Button>
-                )}
-                <Button onClick={onStop} variant="outline" className="hover-scale" aria-label="Stop" disabled={isProcessing}>
-                  <Square /> Stop
-                </Button>
-              </div>
-            </div>
-
-            {/* YouTube Section */}
-            <div className="flex flex-col gap-3 pt-4 border-t border-border">
-              <div className="flex flex-col md:flex-row gap-3">
-                <div className="flex-1">
-                  <Input
-                    placeholder="Enter YouTube URL..."
-                    value={youtubeUrl}
-                    onChange={(e) => setYoutubeUrl(e.target.value)}
-                    disabled={isProcessing}
-                    className="w-full"
-                  />
-                </div>
-                <Button 
-                  onClick={processYouTubeUrl} 
-                  variant="secondary" 
-                  className="hover-scale" 
-                  disabled={isProcessing || !youtubeUrl.trim()}
-                >
-                  {isProcessing ? <Loader2 className="animate-spin" /> : <Youtube />}
-                  {isProcessing ? "Processing..." : "Process YouTube"}
-                </Button>
-              </div>
-
-              {/* Processing Progress */}
-              {isProcessing && (
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">{processingStep}</span>
-                    <span className="text-muted-foreground">{Math.round(processingProgress)}%</span>
-                  </div>
-                  <Progress value={processingProgress} className="w-full" />
-                </div>
+            {/* File Upload and YouTube Section */}
+            <div className="flex flex-wrap items-center gap-3">
+              <Input
+                placeholder="Enter YouTube URL..."
+                value={youtubeUrl}
+                onChange={(e) => setYoutubeUrl(e.target.value)}
+                disabled={isProcessing}
+                className="flex-1 min-w-0"
+              />
+              <Button 
+                onClick={processYouTubeUrl} 
+                variant="secondary" 
+                className="hover-scale" 
+                disabled={isProcessing || !youtubeUrl.trim()}
+              >
+                {isProcessing ? <Loader2 className="animate-spin" /> : <Youtube />}
+                {isProcessing ? "Processing..." : "Process YouTube"}
+              </Button>
+              <Button variant="secondary" onClick={onChooseFile} className="hover-scale" disabled={isProcessing}>
+                <Upload />
+                Choose MIDI
+              </Button>
+              <input
+                ref={inputRef}
+                type="file"
+                accept=".mid,.midi"
+                onChange={onFileSelected}
+                className="hidden"
+              />
+              {fileName ? (
+                <span className="chip-hero" title={fileName}>{fileName}</span>
+              ) : (
+                <span className="text-xs text-muted-foreground">.mid or .midi file</span>
               )}
             </div>
+
+            {/* Processing Progress */}
+            {isProcessing && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">{processingStep}</span>
+                  <span className="text-muted-foreground">{Math.round(processingProgress)}%</span>
+                </div>
+                <Progress value={processingProgress} className="w-full" />
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="surface-card p-3 md:p-5">
+        <div className="surface-card p-3 md:p-4">
+          {/* Playback Controls */}
+          <div className="flex items-center justify-center gap-2 mb-4">
+            {!isPlaying ? (
+              <Button onClick={onPlay} variant="secondary" className="hover-scale" aria-label="Play" disabled={isProcessing}>
+                <Play /> Play
+              </Button>
+            ) : (
+              <Button onClick={onPause} variant="secondary" className="hover-scale" aria-label="Pause">
+                <Pause /> Pause
+              </Button>
+            )}
+            <Button onClick={onStop} variant="outline" className="hover-scale" aria-label="Stop" disabled={isProcessing}>
+              <Square /> Stop
+            </Button>
+          </div>
+
           {/* Seekable progress bar */}
           <SeekBar
             current={currentTime}
@@ -409,7 +402,7 @@ const MidiPlayer: React.FC = () => {
             className="mb-3"
           />
 
-          <FallingPiano notes={notes} currentTime={currentTime} totalDuration={duration} height={520} />
+          <FallingPiano notes={notes} currentTime={currentTime} totalDuration={duration} height={400} />
         </div>
       </div>
     </section>

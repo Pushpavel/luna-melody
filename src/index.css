@@ -128,9 +128,29 @@
   .btn-hero:active {
     transform: translateY(1px);
   }
+  /* New gradient chip (reuses brand gradient styling) */
+  .chip-hero {
+    background: var(--gradient-brand);
+    color: hsl(var(--brand-contrast));
+    box-shadow: var(--shadow-glow);
+    border-radius: 0.375rem; /* rounded-md */
+    padding: 0.25rem 0.75rem; /* py-1 px-3 */
+    font-size: 0.75rem; /* text-xs */
+    line-height: 1rem;
+    font-weight: 500; /* font-medium */
+    display: inline-flex;
+    align-items: center;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   .surface-card {
-    @apply rounded-lg border bg-card/50 backdrop-blur;
+    border-radius: var(--radius);
+    border: 1px solid hsl(var(--border));
+    background-color: hsl(var(--card) / 0.5);
+    backdrop-filter: blur(8px);
     box-shadow: var(--shadow-elevated);
   }
 }

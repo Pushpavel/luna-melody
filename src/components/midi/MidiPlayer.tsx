@@ -170,7 +170,7 @@ const MidiPlayer: React.FC = () => {
 
     try {
       const eventSource = new EventSource(
-        `http://localhost:8000/process?url=${encodeURIComponent(youtubeUrl)}`
+        `/process?url=${encodeURIComponent(youtubeUrl)}`
       );
 
       eventSource.onmessage = (event) => {
@@ -181,7 +181,7 @@ const MidiPlayer: React.FC = () => {
           setProcessingProgress(data.progress || 0);
         } else if (data.type === 'complete') {
           // Download the MIDI file
-          fetch(`http://localhost:8000/download/${data.midiPath}`)
+          fetch(`/download/${data.midiPath}`)
             .then(response => response.arrayBuffer())
             .then(arrayBuffer => {
               loadMidiFromData(arrayBuffer, `${data.title || 'YouTube'}.mid`);

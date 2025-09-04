@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import os
 from sse_starlette.sse import EventSourceResponse
 from sse_starlette import JSONServerSentEvent
@@ -22,6 +23,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount the dist directory at root
+app.mount(
+    "/",
+    StaticFiles(directory=os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist")), html=True),
+    name="static",
+)
+
+# SPA fallback: serve index.html for unknown routes
+@app.exception_handler(404)
+async def spa_fallback(request, exc):
+    index_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist", "index.html"))
+    return HTMLResponse(open(index_path, encoding="utf-8").read())
 
 @app.get("/process")
 def process(url: str, request: Request):

@@ -24,12 +24,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount the dist directory at root
-app.mount(
-    "/",
-    StaticFiles(directory=os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist")), html=True),
-    name="static",
-)
 
 # SPA fallback: serve index.html for unknown routes
 @app.exception_handler(404)
@@ -125,3 +119,10 @@ async def download(midi_path: str):
     """
     logger.info(f"Downloading MIDI file from path: {midi_path}")
     return FileResponse(midi_path, media_type="audio/midi", filename="output.mid")
+
+# Mount the dist directory at root
+app.mount(
+    "/",
+    StaticFiles(directory=os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist")), html=True),
+    name="static",
+)

@@ -144,6 +144,33 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
     return { whites, blacks };
   }, [visibleNotes]);
 
+  // Hit effects: short expanding, fading glow at the moment a note starts
+  const rippleDuration = 0.42; // seconds
+  const easeOutCubic = (t: number) => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
+  const hitEffects = useMemo(() => {
+    const out: Array<{
+      midi: number;
+      start: number;
+      p: number; // 0..1 progress
+      x: number;
+      w: number;
+      v: number;
+      black: boolean;
+    }> = [];
+    if (!notes.length) return out;
+    for (const n of notes) {
+      if (n.time - EPS <= currentTime && currentTime <= n.time + rippleDuration + EPS) {
+        const km = keyMap[n.midi];
+        if (!km) continue;
+        const p = easeOutCubic((currentTime - n.time) / rippleDuration);
+        out.push({ midi: n.midi, start: n.time, p, x: km.x, w: km.w, v: clamp(n.velocity, 0, 1), black: km.black });
+      }
+    }
+    // Stable ordering
+    out.sort((a, b) => (a.start - b.start) || (a.midi - b.midi));
+    return out;
+  }, [notes, currentTime, keyMap]);
+
   return (
     <div ref={containerRef} className="surface-card w-full overflow-hidden" style={{ height }}>
       <svg width={width} height={height} className="block w-full h-full">
@@ -596,6 +623,76 @@ const FallingPiano: React.FC<FallingPianoProps> = ({
               </g>
             );
           })}
+
+        {/* Key hit ripple effects (rendered on top) */}
+        {hitEffects.map((h, idx) => {
+          const base = colorForKeyType(h.midi);
+          const ease = h.p; // already eased 0..1
+          const keyY = laneHeight + 1;
+          const keyH = (h.black ? keyboardHeight * 0.62 : keyboardHeight) - 2; // inner height
+          const keyX = h.x + 1;
+          const keyW = Math.max(2, h.w - 2); // inner width
+          const rx = h.black ? 3 : 5;
+
+          // Expand from center: start as small inset, end filling the key
+          const maxInset = Math.min(keyW, keyH) * 0.4; // 40% shrunk at start
+          const inset = (1 - ease) * maxInset;
+          const rectX = keyX + inset;
+          const rectY = keyY + inset;
+          const rectW = Math.max(2, keyW - inset * 2);
+          const rectH = Math.max(4, keyH - inset * 2);
+
+          // Strength based on velocity and fade over time
+          const alpha = (0.6 + 0.4 * h.v) * (1 - ease);
+
+          const clipId = `clip-hit-${h.midi}-${idx}`;
+          return (
+            <g key={`hit-${h.midi}-${h.start}-${idx}`} pointerEvents="none">
+              <defs>
+                <clipPath id={clipId}>
+                  <rect x={keyX} y={keyY} width={keyW} height={keyH} rx={rx} />
+                </clipPath>
+              </defs>
+              <g clipPath={`url(#${clipId})`}>
+                {/* soft glow fully contained inside the key */}
+                <rect
+                  x={rectX}
+                  y={rectY}
+                  width={rectW}
+                  height={rectH}
+                  rx={rx}
+                  fill={base}
+                  opacity={alpha * 0.5}
+                  filter="url(#noteGlow)"
+                  className="blend-screen"
+                />
+                {/* core fill */}
+                <rect
+                  x={rectX}
+                  y={rectY}
+                  width={rectW}
+                  height={rectH}
+                  rx={rx}
+                  fill={base}
+                  opacity={alpha * 0.7}
+                  style={{ mixBlendMode: h.black ? "screen" : "soft-light" }}
+                />
+                {/* inner ring by slightly smaller outline for a subtle edge */}
+                <rect
+                  x={rectX + 0.75}
+                  y={rectY + 0.75}
+                  width={Math.max(0, rectW - 1.5)}
+                  height={Math.max(0, rectH - 1.5)}
+                  rx={Math.max(0, rx - 0.5)}
+                  fill="none"
+                  stroke={base}
+                  opacity={alpha * 0.85}
+                  filter="url(#playheadGlow)"
+                />
+              </g>
+            </g>
+          );
+        })}
       </svg>
     </div>
   );

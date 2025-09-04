@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Upload, Play, Pause, Square } from "lucide-react";
+import { Upload, Play, Pause, Square, Youtube, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import FallingPiano from "./FallingPiano";
 import { PianoNote } from "./PianoRoll";
 import { toast } from "sonner";
@@ -31,6 +33,12 @@ const MidiPlayer: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [samplesLoaded, setSamplesLoaded] = useState(false);
+
+  // YouTube processing state
+  const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStep, setProcessingStep] = useState("");
+  const [processingProgress, setProcessingProgress] = useState(0);
 
   // Initialize synth
   useEffect(() => {
@@ -116,12 +124,9 @@ const MidiPlayer: React.FC = () => {
 
   const onChooseFile = () => inputRef.current?.click();
 
-  const onFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
+  const loadMidiFromData = useCallback(async (data: ArrayBuffer, name: string) => {
     try {
-      const ab = await f.arrayBuffer();
-      const midi = new Midi(ab);
+      const midi = new Midi(data);
 
       const collected: PianoNote[] = [];
       midi.tracks.forEach((t) => {
@@ -140,7 +145,7 @@ const MidiPlayer: React.FC = () => {
 
       setNotes(collected);
       setDuration(total);
-      setFileName(f.name);
+      setFileName(name);
       Tone.Transport.position = 0;
       Tone.Transport.cancel(0);
       scheduledRef.current = [];
@@ -151,6 +156,70 @@ const MidiPlayer: React.FC = () => {
       console.error(err);
       toast.error("Failed to load MIDI file.");
     }
+  }, []);
+
+  const processYouTubeUrl = useCallback(async () => {
+    if (!youtubeUrl.trim()) {
+      toast.error("Please enter a YouTube URL");
+      return;
+    }
+
+    setIsProcessing(true);
+    setProcessingStep("Initializing...");
+    setProcessingProgress(0);
+
+    try {
+      const eventSource = new EventSource(
+        `http://localhost:6389/process?url=${encodeURIComponent(youtubeUrl)}`
+      );
+
+      eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'progress') {
+          setProcessingStep(data.step);
+          setProcessingProgress(data.progress || 0);
+        } else if (data.type === 'complete') {
+          // Download the MIDI file
+          fetch(`http://localhost:6389/download/${data.fileId}`)
+            .then(response => response.arrayBuffer())
+            .then(arrayBuffer => {
+              loadMidiFromData(arrayBuffer, `${data.title || 'YouTube'}.mid`);
+              setIsProcessing(false);
+              setYoutubeUrl("");
+              eventSource.close();
+            })
+            .catch(err => {
+              console.error(err);
+              toast.error("Failed to download processed MIDI");
+              setIsProcessing(false);
+              eventSource.close();
+            });
+        } else if (data.type === 'error') {
+          toast.error(data.message || "Processing failed");
+          setIsProcessing(false);
+          eventSource.close();
+        }
+      };
+
+      eventSource.onerror = () => {
+        toast.error("Connection lost to processing server");
+        setIsProcessing(false);
+        eventSource.close();
+      };
+
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to start YouTube processing");
+      setIsProcessing(false);
+    }
+  }, [youtubeUrl, loadMidiFromData]);
+
+  const onFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const ab = await f.arrayBuffer();
+    loadMidiFromData(ab, f.name);
   };
 
   const scheduleNotes = useCallback(() => {
@@ -257,37 +326,75 @@ const MidiPlayer: React.FC = () => {
 
       <div className="grid gap-6">
         <div className="surface-card p-4 md:p-6 animate-enter">
-          <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 justify-between">
-            <div className="flex items-center gap-3">
-              <Button variant="hero" onClick={onChooseFile} className="hover-scale">
-                <Upload />
-                Choose MIDI
-              </Button>
-              <input
-                ref={inputRef}
-                type="file"
-                accept=".mid,.midi"
-                onChange={onFileSelected}
-                className="hidden"
-              />
-              <div className="hidden md:block text-sm text-muted-foreground">
-                {fileName ? fileName : ".mid or .midi file"}
+          <div className="flex flex-col gap-4">
+            {/* File Upload Section */}
+            <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 justify-between">
+              <div className="flex items-center gap-3">
+                <Button variant="hero" onClick={onChooseFile} className="hover-scale" disabled={isProcessing}>
+                  <Upload />
+                  Choose MIDI
+                </Button>
+                <input
+                  ref={inputRef}
+                  type="file"
+                  accept=".mid,.midi"
+                  onChange={onFileSelected}
+                  className="hidden"
+                />
+                <div className="hidden md:block text-sm text-muted-foreground">
+                  {fileName ? fileName : ".mid or .midi file"}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {!isPlaying ? (
+                  <Button onClick={onPlay} variant="secondary" className="hover-scale" aria-label="Play" disabled={isProcessing}>
+                    <Play /> Play
+                  </Button>
+                ) : (
+                  <Button onClick={onPause} variant="secondary" className="hover-scale" aria-label="Pause">
+                    <Pause /> Pause
+                  </Button>
+                )}
+                <Button onClick={onStop} variant="outline" className="hover-scale" aria-label="Stop" disabled={isProcessing}>
+                  <Square /> Stop
+                </Button>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              {!isPlaying ? (
-                <Button onClick={onPlay} variant="secondary" className="hover-scale" aria-label="Play">
-                  <Play /> Play
+            {/* YouTube Section */}
+            <div className="flex flex-col gap-3 pt-4 border-t border-border">
+              <div className="flex flex-col md:flex-row gap-3">
+                <div className="flex-1">
+                  <Input
+                    placeholder="Enter YouTube URL..."
+                    value={youtubeUrl}
+                    onChange={(e) => setYoutubeUrl(e.target.value)}
+                    disabled={isProcessing}
+                    className="w-full"
+                  />
+                </div>
+                <Button 
+                  onClick={processYouTubeUrl} 
+                  variant="secondary" 
+                  className="hover-scale" 
+                  disabled={isProcessing || !youtubeUrl.trim()}
+                >
+                  {isProcessing ? <Loader2 className="animate-spin" /> : <Youtube />}
+                  {isProcessing ? "Processing..." : "Process YouTube"}
                 </Button>
-              ) : (
-                <Button onClick={onPause} variant="secondary" className="hover-scale" aria-label="Pause">
-                  <Pause /> Pause
-                </Button>
+              </div>
+
+              {/* Processing Progress */}
+              {isProcessing && (
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{processingStep}</span>
+                    <span className="text-muted-foreground">{Math.round(processingProgress)}%</span>
+                  </div>
+                  <Progress value={processingProgress} className="w-full" />
+                </div>
               )}
-              <Button onClick={onStop} variant="outline" className="hover-scale" aria-label="Stop">
-                <Square /> Stop
-              </Button>
             </div>
           </div>
         </div>

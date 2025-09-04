@@ -1,80 +1,73 @@
-# Welcome to your Lovable project
+# Luna Melody
 
-## Project info
+Luna Melody is a full-stack music web application for piano transcription and MIDI visualization. It features a modern React frontend and a FastAPI backend, both served together on `localhost:8000`. Users can upload MIDI files, or provide a YouTube video link. The backend will automatically transcribe audio into MIDI using state-of-the-art deep learning model, allowing users to interactively explore and visualize the results.
 
-**URL**: https://lovable.dev/projects/ca871ecb-df58-4634-a915-02535ff3fdfd
+## Technology Stack
 
-## How can I edit this code?
+| Layer      | Tech / Library                | Description                          |
+|------------|------------------------------|--------------------------------------|
+| Frontend   | Vite                         | Build tool for fast development      |
+|            | React                        | UI library                           |
+|            | TypeScript                   | Typed JavaScript                     |
+|            | shadcn-ui                    | UI components                        |
+|            | Tailwind CSS                 | Utility-first CSS framework          |
+| Backend    | FastAPI                      | Python web framework (API + static)  |
+|            | uv                           | Python package manager               |
+|            | FFmpeg                       | Audio processing (system dependency) |
+|            | piano_transcription_interface | Piano transcription (uses PyTorch)   |
+|            | PyTorch                      | Deep learning library (dependency)   |
 
-There are several ways of editing your application.
+---
 
-**Use Lovable**
+## Prerequisites
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/ca871ecb-df58-4634-a915-02535ff3fdfd) and start prompting.
+- [FFmpeg](https://ffmpeg.org/download.html) (must be in your PATH)
+- [Node.js](https://nodejs.org/) (includes npm)
+- [uv](https://github.com/astral-sh/uv) (Python package manager)
 
-Changes made via Lovable will be committed automatically to this repo.
+## Setup Instructions
 
-**Use your preferred IDE**
+### 1. Backend Setup
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+Open a terminal and run:
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+cd backend
+uv sync
 ```
 
-**Edit a file directly in GitHub**
+This will install all Python dependencies using `uv`.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### 2. Frontend Setup
 
-**Use GitHub Codespaces**
+From the project root, run:
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+```sh
+npm i
+npm run build
+```
 
-## UI & Technology
+This installs Node.js dependencies and builds the frontend.
 
-This project is built with:
+### 3. Run the Server
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+Start the backend server (serves both frontend and API):
 
-### UI/UX Design
+```sh
+uv run fastapi run main.py
+```
 
-- Modern dark theme with gradients and subtle shadows
-- Piano keys and controls styled for clarity and accessibility in low-light environments
-- Responsive layout for desktop and mobile
-- Inspired by professional music tools and MIDIano for visual clarity
+The app will be available at [http://localhost:8000](http://localhost:8000).
 
-## How can I deploy this project?
+---
 
-Simply open [Lovable](https://lovable.dev/projects/ca871ecb-df58-4634-a915-02535ff3fdfd) and click on Share -> Publish.
+## Notes
 
-## Can I connect a custom domain to my Lovable project?
+- Ensure FFmpeg is installed and accessible from your terminal.
+- For development, you may want to use `npm run dev` for hot-reloading the frontend (served separately).
 
-Yes, you can!
+## Cite
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+This project uses the `piano_transcription_interface` library for automatic piano transcription, which is based on the research paper below.
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+[1] Qiuqiang Kong, Bochen Li, Xuchen Song, Yuan Wan, and Yuxuan Wang. "High-resolution Piano Transcription with Pedals by Regressing Onsets and Offsets Times." arXiv preprint arXiv:2010.01815 (2020). [[pdf]](https://arxiv.org/pdf/2010.01815.pdf)

@@ -4,10 +4,7 @@ Luna Melody is a full-stack music web application for piano transcription and MI
 
 ## Demo
 
-<video width="320" height="240" controls>
-  <source src="rush_e_demo.mp4" type="video/mp4">
-  Your browser does not support the video tag.
-</video>
+https://github.com/user-attachments/assets/ed852462-bb69-444a-8919-10060871b7c8
 
 ## Technology Stack
 

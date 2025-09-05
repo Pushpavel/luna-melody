@@ -2,6 +2,13 @@
 
 Luna Melody is a full-stack music web application for piano transcription and MIDI visualization. It features a modern React frontend and a FastAPI backend, both served together on `localhost:8000`. Users can upload MIDI files, or provide a YouTube video link. The backend will automatically transcribe audio into MIDI using state-of-the-art deep learning model, allowing users to interactively explore and visualize the results.
 
+## Demo
+
+<video width="320" height="240" controls>
+  <source src="rush_e_demo.mp4" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
+
 ## Technology Stack
 
 | Layer      | Tech / Library                | Description                          |

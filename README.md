@@ -13,8 +13,6 @@ Luna Melody is a full-stack music web application for piano transcription and MI
 
 https://github.com/user-attachments/assets/ed852462-bb69-444a-8919-10060871b7c8
 
----
-
 ## Prerequisites
 
 - [FFmpeg](https://ffmpeg.org/download.html) (must be in your PATH)
@@ -76,6 +74,8 @@ The app will be available at [http://localhost:8000](http://localhost:8000).
 |            | FFmpeg                       | Audio processing (system dependency) |
 |            | piano_transcription_interface | Piano transcription (uses PyTorch)   |
 |            | PyTorch                      | Deep learning library (dependency)   |
+
+---
 
 ## Cite
 

@@ -6,23 +6,6 @@ Luna Melody is a full-stack music web application for piano transcription and MI
 
 https://github.com/user-attachments/assets/ed852462-bb69-444a-8919-10060871b7c8
 
-## Technology Stack
-
-| Layer      | Tech / Library                | Description                          |
-|------------|------------------------------|--------------------------------------|
-| Frontend   | Vite                         | Build tool for fast development      |
-|            | React                        | UI library                           |
-|            | TypeScript                   | Typed JavaScript                     |
-|            | shadcn-ui                    | UI components                        |
-|            | Tailwind CSS                 | Utility-first CSS framework          |
-| Backend    | FastAPI                      | Python web framework (API + static)  |
-|            | uv                           | Python package manager               |
-|            | FFmpeg                       | Audio processing (system dependency) |
-|            | piano_transcription_interface | Piano transcription (uses PyTorch)   |
-|            | PyTorch                      | Deep learning library (dependency)   |
-
----
-
 ## Prerequisites
 
 - [FFmpeg](https://ffmpeg.org/download.html) (must be in your PATH)
@@ -69,7 +52,23 @@ The app will be available at [http://localhost:8000](http://localhost:8000).
 
 - Ensure FFmpeg is installed and accessible from your terminal.
 - For development, you may want to use `npm run dev` for hot-reloading the frontend (served separately).
+- 
+## Technology Stack
 
+| Layer      | Tech / Library                | Description                          |
+|------------|------------------------------|--------------------------------------|
+| Frontend   | Vite                         | Build tool for fast development      |
+|            | React                        | UI library                           |
+|            | TypeScript                   | Typed JavaScript                     |
+|            | shadcn-ui                    | UI components                        |
+|            | Tailwind CSS                 | Utility-first CSS framework          |
+| Backend    | FastAPI                      | Python web framework (API + static)  |
+|            | uv                           | Python package manager               |
+|            | FFmpeg                       | Audio processing (system dependency) |
+|            | piano_transcription_interface | Piano transcription (uses PyTorch)   |
+|            | PyTorch                      | Deep learning library (dependency)   |
+
+---
 ## Cite
 
 This project uses the `piano_transcription_interface` library for automatic piano transcription, which is based on the research paper below.

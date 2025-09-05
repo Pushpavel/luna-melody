@@ -7,6 +7,8 @@ import FallingPiano from "./FallingPiano";
 import { PianoNote } from "./PianoRoll";
 import { toast } from "sonner";
 import SeekBar from "./SeekBar";
+import ShinyText from "../ShinyText";
+import TextPressure from "../TextPressure";
 
 // Tone.js and @tonejs/midi imports
 import * as Tone from "tone";
@@ -182,7 +184,7 @@ const MidiPlayer: React.FC<MidiPlayerProps> = ({ onNoteTrigger }) => {
 
       eventSource.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        
+
         if (data.type === 'progress') {
           setProcessingStep(data.step);
           setProcessingProgress(data.progress || 0);
@@ -329,8 +331,21 @@ const MidiPlayer: React.FC<MidiPlayerProps> = ({ onNoteTrigger }) => {
 
   return (
     <section className="container mx-auto max-w-6xl py-5">
-      <header className="mb-6">
-        <h1 className="text-3xl md:text-4xl font-semibold tracking-tight mb-2">Piano MIDI Player</h1>
+      <header className="mb-6 flex flex-col items-center">
+        <h1 style={{ width: '40%'}}>
+          <TextPressure
+            text="Luna Melody"
+            flex={true}
+            alpha={false}
+            stroke={false}
+            width={true}
+            weight={true}
+            italic={true}
+            textColor="#ffffff"
+            strokeColor="#ff0000"
+            minFontSize={36}
+          />
+        </h1>
         <p className="text-sm text-muted-foreground">{headerTitle}</p>
       </header>
 
@@ -346,10 +361,10 @@ const MidiPlayer: React.FC<MidiPlayerProps> = ({ onNoteTrigger }) => {
                 disabled={isProcessing}
                 className="flex-1 min-w-0"
               />
-              <Button 
-                onClick={processYouTubeUrl} 
-                variant="secondary" 
-                className="hover-scale" 
+              <Button
+                onClick={processYouTubeUrl}
+                variant="secondary"
+                className="hover-scale"
                 disabled={isProcessing || !youtubeUrl.trim()}
               >
                 {isProcessing ? <Loader2 className="animate-spin" /> : <Youtube />}
@@ -413,6 +428,9 @@ const MidiPlayer: React.FC<MidiPlayerProps> = ({ onNoteTrigger }) => {
           />
 
           <FallingPiano notes={notes} currentTime={currentTime} totalDuration={duration} height={400} />
+        </div>
+        <div className="text-center text-sm text-muted-foreground mt-4">
+          <ShinyText text="Made with" /> <a href="https://lovable.dev/" target="_blank" rel="noopener noreferrer"><img src="/favicon.ico" alt="lovable" className="inline w-4 h-4 mx-1" /></a> <ShinyText text="by" /> <a href="https://github.com/Pushpavel" target="_blank" rel="noopener noreferrer">@pushpavel</a>
         </div>
       </div>
     </section>

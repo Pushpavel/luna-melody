@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import type { PianoNote } from "./PianoRoll";
+import { lowerBound } from "./playback";
 
 /**
  * Full-screen falling-notes visualizer rendered on a <canvas>.
@@ -62,32 +63,31 @@ const COLORS = {
   },
 };
 
-const lowerBound = (notes: PianoNote[], t: number) => {
-  let lo = 0;
-  let hi = notes.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (notes[mid].time < t) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
-};
+/** Learn-mode view state, read every frame. */
+export type LearnView = { boundaries: number[]; seg: number; duration: number };
 
 type Props = {
   notes: PianoNote[]; // must be sorted by time
   timeRef: React.MutableRefObject<number>;
+  learnRef?: React.MutableRefObject<LearnView | null>;
   onWheelSeek?: (deltaSeconds: number) => void;
+  /** Drag of a segment boundary line in the notes area. tol = snapping tolerance (s). */
+  onBoundaryDrag?: (i: number, t: number, tol: number, free: boolean) => void;
   className?: string;
 };
 
-type Visible = { n: PianoNote; k: Key; active: boolean };
+type Visible = { n: PianoNote; k: Key; active: boolean; dim: boolean };
 
-const PianoCanvas: React.FC<Props> = ({ notes, timeRef, onWheelSeek, className }) => {
+const fmtTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`;
+
+const PianoCanvas: React.FC<Props> = ({ notes, timeRef, learnRef, onWheelSeek, onBoundaryDrag, className }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const notesRef = useRef(notes);
   const maxDurRef = useRef(0);
   const wheelRef = useRef(onWheelSeek);
   wheelRef.current = onWheelSeek;
+  const dragCbRef = useRef(onBoundaryDrag);
+  dragCbRef.current = onBoundaryDrag;
 
   useEffect(() => {
     notesRef.current = notes;
@@ -103,6 +103,12 @@ const PianoCanvas: React.FC<Props> = ({ notes, timeRef, onWheelSeek, className }
     let layout = buildKeys(1);
     let raf = 0;
     let energy = 0;
+    // geometry of the last frame, used for pointer hit-testing
+    let lastLaneH = 1;
+    let lastPps = 1;
+    let lastT = 0;
+    let dragIdx: number | null = null;
+    let hoverIdx: number | null = null;
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
@@ -122,7 +128,7 @@ const PianoCanvas: React.FC<Props> = ({ notes, timeRef, onWheelSeek, className }
     const blacks: Visible[] = [];
 
     const drawNote = (v: Visible, laneH: number, pps: number, t: number) => {
-      const { n, k, active } = v;
+      const { n, k, active, dim } = v;
       const pal = k.black ? COLORS.black : COLORS.white;
       const inset = k.black ? 1 : Math.max(1.5, k.w * 0.06);
       const x = k.x + inset;
@@ -149,12 +155,13 @@ const PianoCanvas: React.FC<Props> = ({ notes, timeRef, onWheelSeek, className }
         ctx.roundRect(x + 0.75, yTop + 0.75, nw - 1.5, nh - 0.75, [r, r, 0, 0]);
         ctx.stroke();
       } else {
-        ctx.globalAlpha = 0.7 + 0.3 * Math.min(1, Math.max(0, n.velocity));
+        ctx.globalAlpha = dim ? 0.16 : 0.7 + 0.3 * Math.min(1, Math.max(0, n.velocity));
         ctx.fillStyle = pal.idle;
         ctx.beginPath();
         ctx.roundRect(x, yTop, nw, nh, r);
         ctx.fill();
         ctx.globalAlpha = 1;
+        if (dim) return;
         ctx.lineWidth = 1;
         ctx.strokeStyle = pal.border;
         ctx.stroke();
@@ -166,6 +173,70 @@ const PianoCanvas: React.FC<Props> = ({ notes, timeRef, onWheelSeek, className }
       }
     };
 
+    const label = (text: string, y: number, bg: string, fg: string) => {
+      ctx.font = "600 11px ui-sans-serif, system-ui, sans-serif";
+      const tw = ctx.measureText(text).width;
+      const ly = Math.max(10, Math.min(lastLaneH - 10, y));
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      ctx.roundRect(8, ly - 10, tw + 14, 20, 10);
+      ctx.fill();
+      ctx.fillStyle = fg;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, 15, ly + 0.5);
+      ctx.textBaseline = "alphabetic";
+    };
+
+    const drawLearnOverlay = (learn: LearnView, t: number, laneH: number, pps: number, segStart: number, segEnd: number) => {
+      const yOf = (time: number) => laneH - (time - t) * pps;
+      // Shade everything after the segment end: this is the "cut"
+      const yEnd = yOf(segEnd);
+      if (yEnd > 0) {
+        const top = 0;
+        const bottom = Math.min(laneH, yEnd);
+        ctx.fillStyle = "rgba(6,7,11,0.55)";
+        ctx.fillRect(0, top, w, bottom - top);
+      }
+      // Shade what's before the segment start (only visible after scrolling back)
+      const yStart = yOf(segStart);
+      if (yStart < laneH && segStart > t) {
+        ctx.fillStyle = "rgba(6,7,11,0.55)";
+        ctx.fillRect(0, yStart, w, laneH - yStart);
+      }
+
+      learn.boundaries.forEach((b, i) => {
+        const y = yOf(b);
+        if (y < -2 || y > laneH + 2) return;
+        const isEnd = b === segEnd;
+        const isStart = b === segStart;
+        const hot = dragIdx === i || hoverIdx === i;
+        ctx.save();
+        if (isEnd || isStart) {
+          ctx.strokeStyle = isEnd ? "hsl(45 95% 58%)" : "hsl(190 90% 60%)";
+          ctx.lineWidth = hot ? 3 : 2;
+          ctx.shadowColor = ctx.strokeStyle;
+          ctx.shadowBlur = hot ? 14 : 8;
+        } else {
+          ctx.strokeStyle = hot ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.28)";
+          ctx.lineWidth = hot ? 2 : 1;
+          ctx.setLineDash([6, 6]);
+        }
+        ctx.beginPath();
+        ctx.moveTo(0, Math.round(y) + 0.5);
+        ctx.lineTo(w, Math.round(y) + 0.5);
+        ctx.stroke();
+        ctx.restore();
+        if (isEnd) label(`End of segment ${learn.seg + 1}${hot ? `  ${fmtTime(b)}` : "  ⇕ drag"}`, y - 14, "hsl(45 95% 55%)", "#1a1203");
+        else if (isStart) label(`Start of segment ${learn.seg + 1}`, y + 14, "hsl(190 90% 55%)", "#03161a");
+        else label(`${i + 2}`, y - 12, "rgba(255,255,255,0.12)", "rgba(255,255,255,0.7)");
+      });
+      if (segEnd === learn.duration) {
+        const y = yOf(segEnd);
+        if (y > 0 && y < laneH) label("End of song", y - 14, "rgba(255,255,255,0.15)", "rgba(255,255,255,0.8)");
+      }
+    };
+
     const draw = () => {
       raf = requestAnimationFrame(draw);
       const t = timeRef.current;
@@ -173,6 +244,16 @@ const PianoCanvas: React.FC<Props> = ({ notes, timeRef, onWheelSeek, className }
       const kbH = Math.min(Math.max(whiteW * 4.6, 70), h * 0.24);
       const laneH = h - kbH;
       const pps = laneH / VISIBLE_SECONDS;
+      lastLaneH = laneH;
+      lastPps = pps;
+      lastT = t;
+      const learn = learnRef?.current ?? null;
+      let segStart = -Infinity;
+      let segEnd = Infinity;
+      if (learn) {
+        segStart = learn.seg === 0 ? 0 : learn.boundaries[learn.seg - 1];
+        segEnd = learn.seg >= learn.boundaries.length ? learn.duration : learn.boundaries[learn.seg];
+      }
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = COLORS.bg;
@@ -190,13 +271,14 @@ const PianoCanvas: React.FC<Props> = ({ notes, timeRef, onWheelSeek, className }
         if (n.time + n.duration <= t) continue;
         const k = keys[n.midi];
         if (!k) continue;
-        const active = n.time <= t;
+        const inSeg = n.time >= segStart - 1e-4 && n.time < segEnd - 1e-4;
+        const active = n.time <= t && inSeg;
         if (active) {
           const prev = activeKeys[n.midi];
           if (!prev || n.time > prev.time) activeKeys[n.midi] = n;
           energyTarget += n.velocity;
         }
-        (k.black ? blacks : whites).push({ n, k, active });
+        (k.black ? blacks : whites).push({ n, k, active, dim: !inSeg });
       }
 
       // Reactive background glow, driven by how much is sounding
@@ -238,6 +320,8 @@ const PianoCanvas: React.FC<Props> = ({ notes, timeRef, onWheelSeek, className }
       for (const v of blacks) if (!v.active) drawNote(v, laneH, pps, t);
       for (const v of whites) if (v.active) drawNote(v, laneH, pps, t);
       for (const v of blacks) if (v.active) drawNote(v, laneH, pps, t);
+
+      if (learn) drawLearnOverlay(learn, t, laneH, pps, segStart, segEnd);
 
       // Contact glow on the hit line for sounding keys
       ctx.save();
@@ -344,12 +428,56 @@ const PianoCanvas: React.FC<Props> = ({ notes, timeRef, onWheelSeek, className }
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
 
+    const boundaryAt = (clientY: number) => {
+      const learn = learnRef?.current;
+      if (!learn || !dragCbRef.current) return null;
+      const y = clientY - canvas.getBoundingClientRect().top;
+      if (y > lastLaneH + 4) return null;
+      let best: number | null = null;
+      let bestD = 8;
+      learn.boundaries.forEach((b, i) => {
+        const d = Math.abs(lastLaneH - (b - lastT) * lastPps - y);
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      });
+      return best;
+    };
+    const timeAtY = (clientY: number) => lastT + (lastLaneH - (clientY - canvas.getBoundingClientRect().top)) / lastPps;
+    const onDown = (e: PointerEvent) => {
+      const i = boundaryAt(e.clientY);
+      if (i === null) return;
+      dragIdx = i;
+      canvas.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    };
+    const onMove = (e: PointerEvent) => {
+      if (dragIdx !== null) {
+        dragCbRef.current?.(dragIdx, timeAtY(e.clientY), 10 / lastPps, e.altKey);
+        return;
+      }
+      hoverIdx = boundaryAt(e.clientY);
+      canvas.style.cursor = hoverIdx !== null ? "ns-resize" : "";
+    };
+    const onUp = () => {
+      dragIdx = null;
+    };
+    canvas.addEventListener("pointerdown", onDown);
+    canvas.addEventListener("pointermove", onMove);
+    canvas.addEventListener("pointerup", onUp);
+    canvas.addEventListener("pointercancel", onUp);
+
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
       canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("pointerdown", onDown);
+      canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointerup", onUp);
+      canvas.removeEventListener("pointercancel", onUp);
     };
-  }, [timeRef]);
+  }, [timeRef, learnRef]);
 
   return <canvas ref={canvasRef} className={className} style={{ display: "block", width: "100%", height: "100%" }} />;
 };

@@ -1,10 +1,18 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Upload, Play, Pause, Square, Youtube, Loader2, Maximize, Minimize, Music2 } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Upload, Play, Pause, Square, Youtube, Loader2, Maximize, Minimize, Music2, GraduationCap,
+  SkipBack, SkipForward, RotateCcw, Scissors, Combine, Repeat, Wand2, Keyboard, X, Minus, Plus,
+} from "lucide-react";
 import { toast } from "sonner";
 import * as Tone from "tone";
 import { Midi } from "@tonejs/midi";
-import PianoCanvas from "./PianoCanvas";
+import PianoCanvas, { type LearnView } from "./PianoCanvas";
+import LearnLane from "./LearnLane";
 import { PianoNote } from "./PianoRoll";
+import { PlaybackEngine, type AutoStopReason } from "./playback";
+import {
+  autoSegment, densityBins, MIN_SEGMENT, onsetClusters, segmentAt, segmentRange, snapToOnset, storageKey,
+} from "./segments";
 import { cn } from "@/lib/utils";
 
 const formatTime = (seconds: number) => {
@@ -101,92 +109,349 @@ const SeekStrip: React.FC<{
   );
 };
 
+const SPEEDS = [0.5, 0.6, 0.7, 0.8, 0.9, 1];
+
+const SHORTCUTS: [string, string][] = [
+  ["Space", "Play / pause — in Learn mode, replays the segment once it has ended"],
+  ["L", "Toggle Learn mode"],
+  ["R  or  Enter", "Replay current segment from its start"],
+  ["← / →", "Previous / next segment (Learn) · seek 5s (normal)"],
+  ["Shift + ← / →", "Nudge 1s"],
+  ["S", "Split segment at the playhead (works while playing)"],
+  ["M", "Merge segment with the next one"],
+  ["A", "Toggle auto-replay"],
+  ["− / +", "Practice speed"],
+  ["Scroll", "Step through notes while paused"],
+  ["Drag lines", "Move segment boundaries (timeline or notes) · Alt = no snapping"],
+  ["F", "Fullscreen"],
+];
+
 const MidiPlayer: React.FC = () => {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const synthRef = useRef<Tone.Sampler | null>(null);
+  const engineRef = useRef<PlaybackEngine>();
+  if (!engineRef.current) engineRef.current = new PlaybackEngine();
+  const engine = engineRef.current;
   const scrubbingRef = useRef(false);
   const wasPlayingRef = useRef(false);
   const timeRef = useRef(0); // read by the canvas every frame
+  const learnRef = useRef<LearnView | null>(null);
+  const replayTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const [fileName, setFileName] = useState<string | null>(null);
   const [notes, setNotes] = useState<PianoNote[]>([]);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [samplesLoaded, setSamplesLoaded] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [idle, setIdle] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [rate, setRate] = useState(1);
+  const [showHelp, setShowHelp] = useState(false);
+
+  // Learn mode
+  const [learnMode, setLearnMode] = useState(false);
+  const [boundaries, setBoundaries] = useState<number[]>([]);
+  const [seg, setSeg] = useState(0);
+  const [reps, setReps] = useState<Record<number, number>>({});
+  const [autoReplay, setAutoReplay] = useState(false);
+  const [replayPending, setReplayPending] = useState(false);
 
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState("");
   const [processingProgress, setProcessingProgress] = useState(0);
 
+  // Latest state for callbacks fired from the engine / timers
+  const st = useRef({ learnMode, boundaries, seg, autoReplay, duration, fileName, notes });
+  st.current = { learnMode, boundaries, seg, autoReplay, duration, fileName, notes };
+
+  const onsets = useMemo(() => onsetClusters(notes), [notes]);
+  const density = useMemo(() => densityBins(notes, duration), [notes, duration]);
+  const [segStart, segEnd] = segmentRange(boundaries, seg, duration);
+
   // ---------- Audio ----------
   useEffect(() => {
     const reverb = new Tone.Reverb({ decay: 2.5, preDelay: 0.01, wet: 0.15 }).toDestination();
-    const sampler = new Tone.Sampler(SAMPLE_URLS, () => setSamplesLoaded(true), "https://tonejs.github.io/audio/salamander/").connect(reverb);
+    const sampler = new Tone.Sampler(SAMPLE_URLS, undefined, "https://tonejs.github.io/audio/salamander/").connect(reverb);
     sampler.release = 1;
     sampler.volume.value = -8;
-    synthRef.current = sampler;
+    engine.sampler = sampler;
     return () => {
-      Tone.Transport.stop();
-      Tone.Transport.cancel(0);
+      engine.pause();
+      engine.sampler = null;
       sampler.dispose();
       reverb.dispose();
-      synthRef.current = null;
     };
-  }, []);
+  }, [engine]);
 
-  // Sync playhead: the canvas reads timeRef every frame; React state is only for the UI text/bar
+  // Playhead sync: the canvas reads timeRef every frame; React state only drives the UI
   useEffect(() => {
     let raf = 0;
     const loop = () => {
       if (!scrubbingRef.current) {
-        let t = Math.max(0, Tone.Transport.seconds);
-        if (duration > 0 && t >= duration - 0.001) {
-          t = duration;
-          if (Tone.Transport.state === "started") {
-            Tone.Transport.pause();
-            setIsPlaying(false);
-          }
-        }
+        const t = engine.time();
         timeRef.current = t;
-        setCurrentTime((prev) => (Math.abs(prev - t) > 0.05 || t === 0 || t === duration ? t : prev));
+        setCurrentTime((prev) => (Math.abs(prev - t) > 0.05 || !engine.playing ? t : prev));
       }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [duration]);
+  }, [engine]);
 
-  const loadMidiFromData = useCallback(async (data: ArrayBuffer, name: string) => {
-    try {
-      const midi = new Midi(data);
-      const collected: PianoNote[] = [];
-      midi.tracks.forEach((t) =>
-        t.notes.forEach((n) => collected.push({ midi: n.midi, time: n.time, duration: n.duration, velocity: n.velocity }))
-      );
-      collected.sort((a, b) => a.time - b.time);
-      const total = collected.reduce((acc, n) => Math.max(acc, n.time + n.duration), 0);
+  // Keep the canvas overlay and the engine's stop point in sync with Learn state
+  useEffect(() => {
+    learnRef.current = learnMode && notes.length ? { boundaries, seg, duration } : null;
+    engine.stopAt = learnMode ? segmentRange(boundaries, seg, duration)[1] : null;
+  }, [engine, learnMode, boundaries, seg, duration, notes.length]);
 
-      Tone.Transport.stop();
-      Tone.Transport.cancel(0);
-      Tone.Transport.position = 0;
-      synthRef.current?.releaseAll();
-      timeRef.current = 0;
-      setCurrentTime(0);
-      setNotes(collected);
-      setDuration(total);
-      setFileName(name.replace(/\.midi?$/i, ""));
-      setIsPlaying(false);
-      toast.success("MIDI loaded — press Space to play");
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to load MIDI file.");
-    }
+  const cancelReplay = useCallback(() => {
+    clearTimeout(replayTimer.current);
+    setReplayPending(false);
   }, []);
+
+  const startPlay = useCallback(async () => {
+    if (!st.current.notes.length) return;
+    if (!engine.sampler?.loaded) {
+      toast("Loading piano samples…");
+      return;
+    }
+    await engine.play();
+    setIsPlaying(true);
+  }, [engine]);
+
+  const pause = useCallback(() => {
+    cancelReplay();
+    engine.pause();
+    setIsPlaying(false);
+  }, [engine, cancelReplay]);
+
+  const showTime = (t: number) => {
+    timeRef.current = t;
+    setCurrentTime(t);
+  };
+
+  /** Select segment k and park the playhead at its start (optionally play it). */
+  const goSegment = useCallback(
+    (k: number, play = false) => {
+      cancelReplay();
+      const { boundaries: b, duration: d } = st.current;
+      const kk = clamp(k, 0, b.length);
+      const [s, e] = segmentRange(b, kk, d);
+      st.current.seg = kk;
+      setSeg(kk);
+      engine.pause();
+      engine.stopAt = e;
+      engine.seek(s);
+      showTime(s);
+      setIsPlaying(false);
+      if (play) startPlay();
+    },
+    [engine, cancelReplay, startPlay]
+  );
+
+  // Engine reached the segment end / song end
+  const autoStopRef = useRef<(reason: AutoStopReason, at: number) => void>(() => {});
+  autoStopRef.current = (reason, at) => {
+    setIsPlaying(false);
+    showTime(at);
+    if (reason !== "segment") return;
+    const k = st.current.seg;
+    setReps((r) => ({ ...r, [k]: (r[k] ?? 0) + 1 }));
+    if (st.current.autoReplay) {
+      setReplayPending(true);
+      replayTimer.current = setTimeout(() => {
+        setReplayPending(false);
+        goSegment(st.current.seg, true);
+      }, 1200);
+    }
+  };
+  useEffect(() => {
+    engine.onAutoStop = (r, at) => autoStopRef.current(r, at);
+  }, [engine]);
+
+  const togglePlay = useCallback(() => {
+    cancelReplay();
+    if (engine.playing) {
+      pause();
+      return;
+    }
+    const t = engine.time();
+    const { learnMode: lm, boundaries: b, seg: k, duration: d } = st.current;
+    if (lm) {
+      const [s, e] = segmentRange(b, k, d);
+      if (t >= e - 0.02 || t < s - 1e-3) {
+        goSegment(k, true); // segment finished (or playhead outside it): replay from its start
+        return;
+      }
+    } else if (t >= d - 0.01) {
+      engine.seek(0);
+    }
+    startPlay();
+  }, [engine, pause, goSegment, startPlay, cancelReplay]);
+
+  const seekTo = useCallback(
+    (t: number) => {
+      cancelReplay();
+      const { learnMode: lm, boundaries: b, duration: d } = st.current;
+      const target = clamp(t, 0, d || 0);
+      if (lm) {
+        const k = segmentAt(b, target);
+        st.current.seg = k;
+        setSeg(k);
+        engine.stopAt = segmentRange(b, k, d)[1];
+      }
+      engine.seek(target);
+      showTime(target);
+    },
+    [engine, cancelReplay]
+  );
+
+  const stop = useCallback(() => {
+    if (st.current.learnMode) goSegment(st.current.seg);
+    else {
+      pause();
+      seekTo(0);
+    }
+  }, [goSegment, pause, seekTo]);
+
+  // ---------- Segment editing ----------
+  const commitBoundaries = useCallback((next: number[], persist = true) => {
+    st.current.boundaries = next;
+    setBoundaries(next);
+    const { fileName: f, notes: ns } = st.current;
+    if (persist && f) localStorage.setItem(storageKey(f, ns), JSON.stringify(next));
+  }, []);
+
+  const moveBoundary = useCallback(
+    (i: number, t: number, tol: number, free: boolean) => {
+      const b = st.current.boundaries;
+      const d = st.current.duration;
+      const lo = (i === 0 ? 0 : b[i - 1]) + MIN_SEGMENT;
+      const hi = (i === b.length - 1 ? d : b[i + 1]) - MIN_SEGMENT;
+      const v = clamp(free ? t : snapToOnset(t, onsets, tol), lo, hi);
+      if (Math.abs(v - b[i]) < 1e-6) return;
+      const next = [...b];
+      next[i] = v;
+      commitBoundaries(next);
+    },
+    [onsets, commitBoundaries]
+  );
+
+  const removeBoundary = useCallback(
+    (i: number) => {
+      const b = st.current.boundaries;
+      if (i < 0 || i >= b.length) return;
+      commitBoundaries(b.filter((_, j) => j !== i));
+      setReps((r) => {
+        const out: Record<number, number> = {};
+        for (const [k, v] of Object.entries(r)) {
+          const kk = Number(k);
+          if (kk <= i) out[kk] = Math.max(out[kk] ?? 0, v);
+          else if (kk === i + 1) out[i] = Math.max(out[i] ?? 0, v);
+          else out[kk - 1] = v;
+        }
+        return out;
+      });
+      const k = st.current.seg > i ? st.current.seg - 1 : st.current.seg;
+      st.current.seg = k;
+      setSeg(k);
+    },
+    [commitBoundaries]
+  );
+
+  const splitAtPlayhead = useCallback(() => {
+    const b = st.current.boundaries;
+    const d = st.current.duration;
+    const t = snapToOnset(engine.time(), onsets, 0.15);
+    const [s, e] = segmentRange(b, segmentAt(b, t), d);
+    if (t - s < MIN_SEGMENT || e - t < MIN_SEGMENT) {
+      toast("Too close to an existing boundary");
+      return;
+    }
+    const next = [...b, t].sort((x, y) => x - y);
+    const k = next.indexOf(t); // the segment that now ends at t
+    commitBoundaries(next);
+    setReps((r) => {
+      const out: Record<number, number> = {};
+      for (const [kk, v] of Object.entries(r)) out[Number(kk) > k ? Number(kk) + 1 : Number(kk)] = v;
+      return out;
+    });
+    st.current.seg = k;
+    setSeg(k);
+    toast.success(`Segment ${k + 1} now ends here`);
+  }, [engine, onsets, commitBoundaries]);
+
+  const resetSegments = useCallback(() => {
+    const { fileName: f, notes: ns, duration: d } = st.current;
+    if (f) localStorage.removeItem(storageKey(f, ns));
+    const next = autoSegment(ns, d);
+    commitBoundaries(next, false);
+    setReps({});
+    goSegment(segmentAt(next, engine.time()));
+    toast.success(`Auto-split into ${next.length + 1} segments`);
+  }, [engine, commitBoundaries, goSegment]);
+
+  const toggleLearn = useCallback(() => {
+    if (!st.current.notes.length) return;
+    cancelReplay();
+    const on = !st.current.learnMode;
+    st.current.learnMode = on;
+    setLearnMode(on);
+    if (on) goSegment(segmentAt(st.current.boundaries, engine.time()));
+    else engine.stopAt = null;
+  }, [engine, goSegment, cancelReplay]);
+
+  const changeRate = useCallback(
+    (dir: number) => {
+      const i = SPEEDS.indexOf(engine.rate);
+      const r = SPEEDS[clamp((i < 0 ? SPEEDS.length - 1 : i) + dir, 0, SPEEDS.length - 1)];
+      engine.setRate(r);
+      setRate(r);
+    },
+    [engine]
+  );
+
+  // ---------- Loading ----------
+  const loadMidiFromData = useCallback(
+    async (data: ArrayBuffer, name: string) => {
+      try {
+        const midi = new Midi(data);
+        const collected: PianoNote[] = [];
+        midi.tracks.forEach((t) =>
+          t.notes.forEach((n) => collected.push({ midi: n.midi, time: n.time, duration: n.duration, velocity: n.velocity }))
+        );
+        collected.sort((a, b) => a.time - b.time);
+        const total = collected.reduce((acc, n) => Math.max(acc, n.time + n.duration), 0);
+        const title = name.replace(/\.midi?$/i, "");
+
+        cancelReplay();
+        engine.setNotes(collected, total);
+        let saved: number[] | null = null;
+        try {
+          saved = JSON.parse(localStorage.getItem(storageKey(title, collected)) ?? "null");
+        } catch {
+          saved = null;
+        }
+        const b = Array.isArray(saved) ? saved : autoSegment(collected, total);
+        st.current = { ...st.current, notes: collected, duration: total, fileName: title, boundaries: b, seg: 0 };
+        setNotes(collected);
+        setDuration(total);
+        setFileName(title);
+        setBoundaries(b);
+        setSeg(0);
+        setReps({});
+        engine.stopAt = st.current.learnMode ? segmentRange(b, 0, total)[1] : null;
+        showTime(0);
+        setIsPlaying(false);
+        toast.success(saved ? "MIDI loaded — your saved segments were restored" : "MIDI loaded — press Space to play, L to learn");
+      } catch (err) {
+        console.error(err);
+        toast.error("Failed to load MIDI file.");
+      }
+    },
+    [engine, cancelReplay]
+  );
 
   const processYouTubeUrl = useCallback(() => {
     if (!youtubeUrl.trim()) {
@@ -241,87 +506,34 @@ const MidiPlayer: React.FC = () => {
     [loadMidiFromData]
   );
 
-  // ---------- Transport ----------
-  const scheduleNotes = useCallback(() => {
-    Tone.Transport.cancel(0);
-    notes.forEach((n) => {
-      Tone.Transport.schedule((time) => {
-        synthRef.current?.triggerAttackRelease(Tone.Frequency(n.midi, "midi").toNote(), n.duration, time, n.velocity);
-      }, n.time);
-    });
-  }, [notes]);
-
-  const onPlay = useCallback(async () => {
-    if (!notes.length) return;
-    await Tone.start();
-    if (!samplesLoaded) {
-      toast("Loading piano samples…");
-      return;
-    }
-    if (timeRef.current >= duration - 0.01) Tone.Transport.seconds = 0;
-    if (Tone.Transport.state === "stopped") scheduleNotes();
-    Tone.Transport.start();
-    setIsPlaying(true);
-  }, [notes.length, scheduleNotes, samplesLoaded, duration]);
-
-  const onPause = useCallback(() => {
-    Tone.Transport.pause();
-    synthRef.current?.releaseAll();
-    setIsPlaying(false);
-  }, []);
-
-  const onStop = useCallback(() => {
-    Tone.Transport.stop();
-    Tone.Transport.position = 0;
-    synthRef.current?.releaseAll();
-    timeRef.current = 0;
-    setCurrentTime(0);
-    setIsPlaying(false);
-  }, []);
-
-  const seekTo = useCallback(
-    (t: number) => {
-      const target = clamp(t, 0, duration || 0);
-      Tone.Transport.seconds = target;
-      timeRef.current = target;
-      setCurrentTime(target);
-    },
-    [duration]
-  );
-
+  // ---------- Seek strip / wheel ----------
   const handleScrub = useCallback(
     (val: number) => {
       if (!scrubbingRef.current) {
         scrubbingRef.current = true;
-        wasPlayingRef.current = isPlaying;
-        if (isPlaying) onPause();
+        wasPlayingRef.current = engine.playing;
+        if (engine.playing) pause();
       }
-      timeRef.current = val;
-      setCurrentTime(val);
+      showTime(val);
     },
-    [isPlaying, onPause]
+    [engine, pause]
   );
 
   const handleScrubEnd = useCallback(
     (val: number) => {
       seekTo(val);
-      if (Tone.Transport.state === "stopped") scheduleNotes();
-      if (wasPlayingRef.current) {
-        Tone.Transport.start();
-        setIsPlaying(true);
-      }
       scrubbingRef.current = false;
+      if (wasPlayingRef.current) startPlay();
     },
-    [seekTo, scheduleNotes]
+    [seekTo, startPlay]
   );
 
-  // Mouse wheel over the notes scrubs through time while paused
   const handleWheelSeek = useCallback(
     (delta: number) => {
-      if (isPlaying || !notes.length) return;
-      seekTo(timeRef.current + delta);
+      if (engine.playing || !st.current.notes.length) return;
+      seekTo(engine.time() + delta);
     },
-    [isPlaying, notes.length, seekTo]
+    [engine, seekTo]
   );
 
   const toggleFullscreen = useCallback(() => {
@@ -335,30 +547,48 @@ const MidiPlayer: React.FC = () => {
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
 
-  // Keyboard shortcuts
+  // ---------- Keyboard shortcuts ----------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (tag === "INPUT" || tag === "TEXTAREA" || e.ctrlKey || e.metaKey) return;
+      const lm = st.current.learnMode;
+      const k = e.key;
       if (e.code === "Space") {
         e.preventDefault();
-        if (isPlaying) onPause();
-        else onPlay();
-      } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        togglePlay();
+      } else if (k === "ArrowRight" || k === "ArrowLeft") {
         e.preventDefault();
-        const step = (e.shiftKey ? 1 : 5) * (e.key === "ArrowRight" ? 1 : -1);
-        seekTo(timeRef.current + step);
-      } else if (e.key === "f" || e.key === "F") {
-        toggleFullscreen();
-      } else if (e.key === "Home") {
-        seekTo(0);
+        const dir = k === "ArrowRight" ? 1 : -1;
+        if (e.shiftKey) seekTo(engine.time() + dir);
+        else if (lm) goSegment(st.current.seg + dir);
+        else seekTo(engine.time() + 5 * dir);
+      } else if (k === "Enter" || k === "r" || k === "R") {
+        e.preventDefault();
+        if (lm) goSegment(st.current.seg, true);
+        else {
+          seekTo(0);
+          startPlay();
+        }
+      } else if (k === "l" || k === "L") toggleLearn();
+      else if ((k === "s" || k === "S") && lm) splitAtPlayhead();
+      else if ((k === "m" || k === "M") && lm) removeBoundary(st.current.seg);
+      else if (k === "a" || k === "A") setAutoReplay((v) => !v);
+      else if (k === "-" || k === "_") changeRate(-1);
+      else if (k === "=" || k === "+") changeRate(1);
+      else if (k === "f" || k === "F") toggleFullscreen();
+      else if (k === "?") setShowHelp((v) => !v);
+      else if (k === "Escape") setShowHelp(false);
+      else if (k === "Home") {
+        if (lm) goSegment(0);
+        else seekTo(0);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isPlaying, onPause, onPlay, seekTo, toggleFullscreen]);
+  }, [engine, togglePlay, seekTo, goSegment, startPlay, toggleLearn, splitAtPlayhead, removeBoundary, changeRate, toggleFullscreen]);
 
-  // Auto-hide the top bar while playing and the mouse is still
+  // Auto-hide the top bar while playing and the mouse is still (kept visible in Learn mode)
   const idleTimer = useRef<ReturnType<typeof setTimeout>>();
   const poke = useCallback(() => {
     setIdle(false);
@@ -366,9 +596,19 @@ const MidiPlayer: React.FC = () => {
     idleTimer.current = setTimeout(() => setIdle(true), 2500);
   }, []);
   useEffect(() => () => clearTimeout(idleTimer.current), []);
-  const showChrome = !isPlaying || !idle;
+  useEffect(() => () => clearTimeout(replayTimer.current), []);
+  const showChrome = !isPlaying || !idle || learnMode;
 
   const hasSong = notes.length > 0;
+  const atSegEnd = learnMode && !isPlaying && currentTime >= segEnd - 0.02;
+
+  let status: string | null = null;
+  if (hasSong && !isProcessing) {
+    if (replayPending) status = "Replaying…";
+    else if (learnMode && atSegEnd) status = `Segment ${seg + 1} done ×${reps[seg] ?? 0}  ·  Space: replay  ·  →: next`;
+    else if (learnMode && !isPlaying) status = `Segment ${seg + 1}  ·  Space: play  ·  scroll to inspect`;
+    else if (!isPlaying && currentTime > 0) status = "Paused  ·  scroll to step through notes";
+  }
 
   return (
     <div
@@ -387,7 +627,14 @@ const MidiPlayer: React.FC = () => {
         loadFile(e.dataTransfer.files?.[0]);
       }}
     >
-      <PianoCanvas notes={notes} timeRef={timeRef} onWheelSeek={handleWheelSeek} className="absolute inset-0" />
+      <PianoCanvas
+        notes={notes}
+        timeRef={timeRef}
+        learnRef={learnRef}
+        onWheelSeek={handleWheelSeek}
+        onBoundaryDrag={moveBoundary}
+        className="absolute inset-0"
+      />
 
       <input
         ref={inputRef}
@@ -407,7 +654,7 @@ const MidiPlayer: React.FC = () => {
           showChrome ? "translate-y-0 opacity-100" : "pointer-events-none -translate-y-3 opacity-0"
         )}
       >
-        <div className="border-b border-white/5 bg-black/55 backdrop-blur-md">
+        <div className="border-b border-white/5 bg-black/60 backdrop-blur-md">
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 py-2">
             {/* Left: brand + song */}
             <div className="flex min-w-0 items-center gap-3">
@@ -427,11 +674,11 @@ const MidiPlayer: React.FC = () => {
 
             {/* Center: transport */}
             <div className="flex items-center gap-1">
-              <IconButton onClick={onStop} disabled={!hasSong} aria-label="Stop" title="Stop (Home)">
+              <IconButton onClick={stop} disabled={!hasSong} aria-label="Stop" title="Stop">
                 <Square className="h-4 w-4" />
               </IconButton>
               <button
-                onClick={isPlaying ? onPause : onPlay}
+                onClick={togglePlay}
                 disabled={!hasSong}
                 aria-label={isPlaying ? "Pause" : "Play"}
                 title="Play / Pause (Space)"
@@ -442,12 +689,23 @@ const MidiPlayer: React.FC = () => {
               <span className="ml-2 w-24 text-xs tabular-nums text-white/60">
                 {formatTime(currentTime)} / {formatTime(duration)}
               </span>
+              <div className="ml-1 flex items-center rounded-full border border-white/10 bg-white/5" title="Practice speed (− / +)">
+                <button onClick={() => changeRate(-1)} className="px-1.5 py-1 text-white/60 hover:text-white" aria-label="Slower">
+                  <Minus className="h-3 w-3" />
+                </button>
+                <span className={cn("w-9 text-center text-xs tabular-nums", rate < 1 ? "text-[hsl(45_92%_65%)]" : "text-white/70")}>
+                  {Math.round(rate * 100)}%
+                </span>
+                <button onClick={() => changeRate(1)} className="px-1.5 py-1 text-white/60 hover:text-white" aria-label="Faster">
+                  <Plus className="h-3 w-3" />
+                </button>
+              </div>
             </div>
 
-            {/* Right: sources + fullscreen */}
+            {/* Right: sources + modes */}
             <div className="flex items-center justify-end gap-2">
               <form
-                className="hidden items-center rounded-full border border-white/10 bg-white/5 pl-3 focus-within:border-white/30 md:flex"
+                className="hidden items-center rounded-full border border-white/10 bg-white/5 pl-3 focus-within:border-white/30 xl:flex"
                 onSubmit={(e) => {
                   e.preventDefault();
                   processYouTubeUrl();
@@ -459,7 +717,7 @@ const MidiPlayer: React.FC = () => {
                   onChange={(e) => setYoutubeUrl(e.target.value)}
                   disabled={isProcessing}
                   placeholder="Paste a YouTube link…"
-                  className="w-56 bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-white/35 lg:w-72"
+                  className="w-56 bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-white/35"
                 />
                 <button
                   type="submit"
@@ -469,8 +727,25 @@ const MidiPlayer: React.FC = () => {
                   {isProcessing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Transcribe"}
                 </button>
               </form>
+              <button
+                onClick={toggleLearn}
+                disabled={!hasSong}
+                title="Learn mode (L)"
+                className={cn(
+                  "inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition-colors disabled:opacity-40",
+                  learnMode
+                    ? "bg-[hsl(45_92%_55%)] text-black hover:bg-[hsl(45_92%_62%)]"
+                    : "border border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
+                )}
+              >
+                <GraduationCap className="h-4 w-4" />
+                Learn
+              </button>
               <IconButton onClick={() => inputRef.current?.click()} disabled={isProcessing} title="Open MIDI file" aria-label="Open MIDI file">
                 <Upload className="h-4 w-4" />
+              </IconButton>
+              <IconButton onClick={() => setShowHelp((v) => !v)} active={showHelp} title="Shortcuts (?)" aria-label="Keyboard shortcuts">
+                <Keyboard className="h-4 w-4" />
               </IconButton>
               <IconButton onClick={toggleFullscreen} title="Fullscreen (F)" aria-label="Toggle fullscreen">
                 {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
@@ -480,13 +755,126 @@ const MidiPlayer: React.FC = () => {
           <div className="px-2">
             <SeekStrip current={currentTime} duration={duration} onScrub={handleScrub} onScrubEnd={handleScrubEnd} />
           </div>
+
+          {/* ---------- Learn toolbar + segment lane ---------- */}
+          {learnMode && hasSong && (
+            <div className="space-y-2 px-4 pb-3 pt-1">
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 text-sm">
+                <div className="flex min-w-0 items-baseline gap-2">
+                  <span className="font-medium">
+                    Segment {seg + 1}
+                    <span className="text-white/40"> / {boundaries.length + 1}</span>
+                  </span>
+                  <span className="text-xs tabular-nums text-white/45">
+                    {formatTime(segStart)} – {formatTime(segEnd)} · {(segEnd - segStart).toFixed(1)}s
+                  </span>
+                  {(reps[seg] ?? 0) > 0 && (
+                    <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-xs tabular-nums text-[hsl(45_92%_70%)]">
+                      ×{reps[seg]}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  <IconButton onClick={() => goSegment(seg - 1)} disabled={seg === 0} title="Previous segment (←)" aria-label="Previous segment">
+                    <SkipBack className="h-4 w-4" />
+                  </IconButton>
+                  <button
+                    onClick={() => goSegment(seg, true)}
+                    title="Replay segment (R)"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full bg-white/10 px-3 text-xs font-medium hover:bg-white/20"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Replay
+                  </button>
+                  <IconButton
+                    onClick={() => goSegment(seg + 1)}
+                    disabled={seg >= boundaries.length}
+                    title="Next segment (→)"
+                    aria-label="Next segment"
+                  >
+                    <SkipForward className="h-4 w-4" />
+                  </IconButton>
+                </div>
+                <div className="flex items-center justify-end gap-1 text-xs">
+                  <button
+                    onClick={splitAtPlayhead}
+                    title="Split at playhead (S)"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-white/70 hover:bg-white/10 hover:text-white"
+                  >
+                    <Scissors className="h-3.5 w-3.5" /> Split
+                  </button>
+                  <button
+                    onClick={() => removeBoundary(seg)}
+                    disabled={seg >= boundaries.length}
+                    title="Merge with next segment (M)"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-white/70 hover:bg-white/10 hover:text-white disabled:opacity-30"
+                  >
+                    <Combine className="h-3.5 w-3.5" /> Merge
+                  </button>
+                  <button
+                    onClick={() => setAutoReplay((v) => !v)}
+                    title="Auto-replay the segment after it ends (A)"
+                    className={cn(
+                      "inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 transition-colors",
+                      autoReplay ? "bg-cyan-400/20 text-[hsl(190_90%_70%)]" : "text-white/70 hover:bg-white/10 hover:text-white"
+                    )}
+                  >
+                    <Repeat className="h-3.5 w-3.5" /> Auto-replay
+                  </button>
+                  <button
+                    onClick={resetSegments}
+                    title="Re-generate segments automatically"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-white/70 hover:bg-white/10 hover:text-white"
+                  >
+                    <Wand2 className="h-3.5 w-3.5" /> Auto-split
+                  </button>
+                </div>
+              </div>
+              <LearnLane
+                duration={duration}
+                boundaries={boundaries}
+                seg={seg}
+                reps={reps}
+                density={density}
+                currentTime={currentTime}
+                onSelect={(k) => goSegment(k)}
+                onMoveBoundary={moveBoundary}
+                onRemoveBoundary={removeBoundary}
+              />
+            </div>
+          )}
         </div>
+
+        {status && (
+          <div className="pointer-events-none absolute left-1/2 top-full mt-3 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/10 bg-black/60 px-3 py-1 text-xs text-white/75 backdrop-blur">
+            {status}
+          </div>
+        )}
       </header>
 
-      {/* Paused badge so the frozen frame is clearly a paused state */}
-      {hasSong && !isPlaying && currentTime > 0 && !isProcessing && (
-        <div className="pointer-events-none absolute left-1/2 top-24 z-10 -translate-x-1/2 rounded-full border border-white/10 bg-black/50 px-3 py-1 text-xs text-white/70 backdrop-blur">
-          Paused · scroll to step through notes
+      {/* ---------- Shortcuts panel ---------- */}
+      {showHelp && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/50 p-6" onClick={() => setShowHelp(false)}>
+          <div
+            className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#0f1218]/95 p-5 shadow-2xl backdrop-blur-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="font-semibold">Keyboard shortcuts</h2>
+              <IconButton onClick={() => setShowHelp(false)} aria-label="Close">
+                <X className="h-4 w-4" />
+              </IconButton>
+            </div>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+              {SHORTCUTS.map(([key, desc]) => (
+                <React.Fragment key={key}>
+                  <dt>
+                    <kbd className="whitespace-nowrap rounded border border-white/15 bg-white/5 px-1.5 py-0.5 font-mono text-xs">{key}</kbd>
+                  </dt>
+                  <dd className="text-white/65">{desc}</dd>
+                </React.Fragment>
+              ))}
+            </dl>
+          </div>
         </div>
       )}
 

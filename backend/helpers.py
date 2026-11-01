@@ -31,6 +31,9 @@ ydl_opts = {
 
     # Select the best audio-only format
     'format': 'bestaudio/best',
+
+    # Download only the video, ignoring any playlist/mix in the URL
+    'noplaylist': True,
 }
 
 
